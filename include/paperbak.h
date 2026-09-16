@@ -30,7 +30,6 @@
 #undef min
 #endif
 
-#include "bzlib.h"
 #include "Bitmap.h"
 #include "FileAttributes.h"
 #include "Borland.h"
@@ -54,9 +53,6 @@
 #define MAINDY         600             // Max height of the main window, pixels
 
 #define TEXTLEN        256             // Maximal length of strings
-#define PASSLEN        33              // Maximal length of password, incl. 0
-#define USE_SHA1       1
-#define AESKEYLEN      24              // AES key length in bytes (16, 24, or 32)
 
 typedef unsigned char  uchar;
 typedef uint16_t       ushort;
@@ -90,22 +86,20 @@ typedef struct __attribute__ ((packed)) t_data { // Block on paper
 _Static_assert(sizeof(t_data)==128, "t_data not 128 bytes long");
 #endif
 
-#define PBM_COMPRESSED 0x01            // Paper backup is compressed
-#define PBM_ENCRYPTED  0x02            // Paper backup is encrypted
 
 // FILETIME is 64-bit data type, time_t typically 64-bit, but was 32-bit in
 // older *NIX versions.  Assertion failure is likely due to this.  128 bytes
 // is necessary for ECC to work properly (and multiples of 16 for CRC)
 typedef struct __attribute__ ((packed)) t_superdata { // Id block on paper
   uint32_t       addr;                 // Expecting SUPERBLOCK
-  uint32_t       datasize;             // Size of (compressed) data
-  uint32_t       pagesize;             // Size of (compressed) data on page
-  uint32_t       origsize;             // Size of original (uncompressed) data
-  uchar          mode;                 // Special mode bits, set of PBM_xxx
+  uint32_t       datasize;             // Size of stored data
+  uint32_t       pagesize;             // Size of stored data on page
+  uint32_t       origsize;             // Size of original data
+  uchar          mode;                 // Reserved mode, must be zero
   uchar          attributes;           // Basic file attributes
   ushort         page;                 // Actual page (1-based)
   FileTimePortable modified;           // last modify time
-  ushort         filecrc;              // CRC of compressed decrypted file
+  ushort         filecrc;              // CRC of stored data
   char           name[FILENAME_SIZE];  // File name - may have all 64 chars
   ushort         crc;                  // Cyclic redundancy of previous fields
   uchar          ecc[ECC_SIZE];        // Reed-Solomon's error correction code
@@ -123,14 +117,14 @@ typedef struct t_block {               // Block in memory
 
 typedef struct t_superblock {          // Identification block in memory
   uint32_t       addr;                 // Expecting SUPERBLOCK
-  uint32_t       datasize;             // Size of (compressed) data
-  uint32_t       pagesize;             // Size of (compressed) data on page
-  uint32_t       origsize;             // Size of original (uncompressed) data
-  uint32_t       mode;                 // Special mode bits, set of PBM_xxx
+  uint32_t       datasize;             // Size of stored data
+  uint32_t       pagesize;             // Size of stored data on page
+  uint32_t       origsize;             // Size of original data
+  uint32_t       mode;                 // Reserved mode, must be zero
   ushort         page;                 // Actual page (1-based)
   FileTimePortable modified;           // last modify time
   uint32_t       attributes;           // Basic file attributes
-  uint32_t       filecrc;              // 16-bit CRC of decrypted packed file
+  uint32_t       filecrc;              // 16-bit CRC of stored data
   char           name[FILENAME_SIZE];  // File name - may have all 64 chars
   int            ngroup;               // Actual NGROUP on the page
 } t_superblock;
@@ -163,18 +157,14 @@ typedef struct t_printdata {           // Print control structure
   uint32_t       attributes;           // File attributes
   uint32_t       origsize;             // Original file size, bytes
   uint32_t       readsize;             // Amount of data read from file so far
-  uint32_t       datasize;             // Size of (compressed) data
+  uint32_t       datasize;             // Size of stored data
   uint32_t       alignedsize;          // Data size aligned to next 16 bytes
-  uint32_t       pagesize;             // Size of (compressed) data on page
-  int            compression;          // 0: none, 1: fast, 2: maximal
-  int            encryption;           // 0: none, 1: encrypt
+  uint32_t       pagesize;             // Size of stored data on page
   int            printheader;          // Print header and footer
   int            printborder;          // Print border around bitmap
   int            redundancy;           // Redundancy
-  uchar          *buf;                 // Buffer for compressed file
+  uchar          *buf;                 // Buffer for file data
   uint32_t       bufsize;              // Size of buf, bytes
-  uchar          *readbuf;             // Read buffer, PACKLEN bytes long
-  bz_stream      bzstream;             // Compression control structure
   int            bufcrc;               // 16-bit CRC of (packed) data in buf
   t_superdata    superdata;            // Identification block on paper
   //HDC            dc;                   // Printer device context
@@ -184,6 +174,7 @@ typedef struct t_printdata {           // Print control structure
   int            ppiy;                 // Printer Y resolution, pixels per inch
   int            width;                // Page width, pixels
   int            height;               // Page height, pixels
+  int sheetwidth, sheetheight;
   //HFONT          hfont6;               // Font 1/6 inch high
   //HFONT          hfont10;              // Font 1/10 inch high
   int            extratop;             // Height of title line, pixels
@@ -206,8 +197,8 @@ typedef struct t_printdata {           // Print control structure
 } t_printdata;
 
 
-int       pb_resx, pb_resy;            // Printer resolution, dpi (may be 0!)
-t_printdata pb_printdata;          // Print control structure
+extern int       pb_resx, pb_resy;            // Printer resolution, dpi (may be 0!)
+extern t_printdata pb_printdata;          // Print control structure
 
 void   Initializeprintsettings(void);
 void   Closeprintsettings(void);
@@ -263,8 +254,8 @@ typedef struct t_procdata {            // Descriptor of processed data
   int            nrestored;            // Page statistics: restored bytes
 } t_procdata;
 
-int       pb_orientation;          // Orientation of bitmap (-1: unknown)
-t_procdata pb_procdata;            // Descriptor of processed data
+extern int       pb_orientation;          // Orientation of bitmap (-1: unknown)
+extern t_procdata pb_procdata;            // Descriptor of processed data
 
 void   Nextdataprocessingstep(t_procdata *pdata);
 void   Freeprocdata(t_procdata *pdata);
@@ -284,12 +275,12 @@ typedef struct t_fproc {               // Descriptor of processed file
   char           name[64];             // File name - may have all 64 chars
   FileTimePortable modified;           // last modify time
   uint32_t       attributes;           // Basic file attrributes
-  uint32_t       datasize;             // Size of (compressed) data
-  uint32_t       pagesize;             // Size of (compressed) data on page
-  uint32_t       origsize;             // Size of original (uncompressed) data
-  uint32_t       mode;                 // Special mode bits, set of PBM_xxx
+  uint32_t       datasize;             // Size of stored data
+  uint32_t       pagesize;             // Size of stored data on page
+  uint32_t       origsize;             // Size of original data
+  uint32_t       mode;                 // Reserved mode, must be zero
   int            npages;               // Total number of pages
-  uint32_t       filecrc;              // 16-bit CRC of decrypted packed file
+  uint32_t       filecrc;              // 16-bit CRC of stored data
   // Properties of currently processed page.
   int            page;                 // Currently processed page
   int            ngroup;               // Actual NGROUP on the page
@@ -308,7 +299,7 @@ typedef struct t_fproc {               // Descriptor of processed file
   int            rempages[8];          // 1-based list of remaining pages
 } t_fproc;
 
-t_fproc   pb_fproc[NFILE];             // Processed file
+extern t_fproc   pb_fproc[NFILE];             // Processed file
 
 void   Closefproc(int slot);
 int    Startnextpage(t_superblock *superblock);
@@ -326,29 +317,25 @@ int    Decodebitmap(char *path);
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////////////// USER INTERFACE ////////////////////////////////
 
-char      pb_infile[MAXPATH];      // Last selected file to read
-char      pb_outbmp[MAXPATH];      // Last selected bitmap to save
-char      pb_inbmp[MAXPATH];       // Last selected bitmap to read
-char      pb_outfile[MAXPATH];     // Last selected data file to save
+extern char      pb_infile[MAXPATH];      // Last selected file to read
+extern char      pb_outbmp[MAXPATH];      // Last selected bitmap to save
+extern char      pb_inbmp[MAXPATH];       // Last selected bitmap to read
+extern char      pb_outfile[MAXPATH];     // Last selected data file to save
  
-char      pb_password[PASSLEN];    // Encryption password
  
-int       pb_dpi;                  // Dot raster, dots per inch
-int       pb_dotpercent;           // Dot size, percent of dpi
-int       pb_compression;          // 0: none, 1: fast, 2: maximal
-int       pb_redundancy;           // Redundancy (NGROUPMIN..NGROUPMAX)
-int       pb_printheader;          // Print header and footer
-int       pb_printborder;          // Border around bitmap
-int       pb_autosave;             // Autosave completed files
-int       pb_bestquality;          // Determine best quality
-int       pb_encryption;           // Encrypt data before printing
-int       pb_opentext;             // Enter passwords in open text
+extern int       pb_dpi;                  // Dot raster, dots per inch
+extern int       pb_dotpercent;           // Dot size, percent of dpi
+extern int       pb_redundancy;           // Redundancy (NGROUPMIN..NGROUPMAX)
+extern int       pb_printheader;          // Print header and footer
+extern int       pb_printborder;          // Border around bitmap
+extern int       pb_autosave;             // Autosave completed files
+extern int       pb_bestquality;          // Determine best quality
   
-int       pb_marginunits;          // 0:undef, 1:inches, 2:millimeters
-int       pb_marginleft;           // Left printer page margin
-int       pb_marginright;          // Right printer page margin
-int       pb_margintop;            // Top printer page margin
-int       pb_marginbottom;         // Bottom printer page margin
+extern int       pb_marginunits;          // 0:undef, 1:inches, 2:millimeters
+extern int       pb_marginleft;           // Left printer page margin
+extern int       pb_marginright;          // Right printer page margin
+extern int       pb_margintop;            // Top printer page margin
+extern int       pb_marginbottom;         // Bottom printer page margin
   
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -362,8 +349,6 @@ void Message(const char *input, int progress);
 // Formerly standard case insentitive cstring compare
 int strnicmp (const char *str1, const char *str2, size_t len);
 
-// returns 0 on success, -1 on failure
-int Getpassword();
 
 int max (int a, int b);
 
@@ -382,3 +367,6 @@ void print_filetime(FILETIME ftime);
 
 #endif
 
+
+extern int pb_errors, pb_force;
+extern double pb_paperwidth, pb_paperheight, pb_margins[4];

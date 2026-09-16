@@ -22,9 +22,6 @@
 // with this program. If not, see <http://www.gnu.org/licenses/>.             //
 //                                                                            //
 //                                                                            //
-// Note that bzip2 compression/decompression library, which is the part of    //
-// this project, is covered by different license, which, in my opinion, is    //
-// compatible with GPL.                                                       //
 //                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -35,8 +32,7 @@
 #include <sys/stat.h>
 #endif
 #include <stdlib.h>
-#include "bzlib.h"
-#include "aes.h"
+#include <math.h>
 #include "Bitmap.h"
 #include "FileAttributes.h"
 
@@ -129,23 +125,17 @@ static void Fillblock(int blockx,int blocky,uchar *bits,int width,int height,
 
 // Stops printing and cleans print descriptor.
 void Stopprinting(t_printdata *print) {
-  // Finish compression.
-  if (print->compression!=0) {
-    BZ2_bzCompressEnd(&print->bzstream);
-    print->compression=0; };
   // Close input file.
   //if (print->hfile!=NULL && print->hfile!=INVALID_HANDLE_VALUE) {
   //  CloseHandle(print->hfile); print->hfile=NULL; };
-  if (print->hfile != NULL)
+  if (print->hfile != NULL) {
     fclose(print->hfile);
+    print->hfile=NULL;
+  }
   // Deallocate memory.
   if (print->buf!=NULL) {
     free(print->buf); 
     print->buf=NULL; 
-  };
-  if (print->readbuf!=NULL) {
-    free(print->readbuf); 
-    print->readbuf=NULL;
   };
   if (print->drawbits!=NULL) {
     free(print->drawbits); 
@@ -206,7 +196,10 @@ static void Preparefiletoprint(t_printdata *print)
     print->modified=ftp;
   }
   // Get original (uncompressed) file size.
-  print->origsize=GetFileSize (h, &l);
+  DWORD highsize;
+  print->origsize=GetFileSize (h, &highsize);
+  l=highsize;
+  CloseHandle(h);
   if (print->origsize==0 || print->origsize>MAXSIZE || l!=0) {
     Reporterror("Invalid file size");
     Stopprinting(print);
@@ -242,25 +235,11 @@ static void Preparefiletoprint(t_printdata *print)
   }
 
   print->readsize=0;
-  // Allocate buffer for compressed file. (If compression is off, buffer will
-  // contain uncompressed data). As AES encryption works on 16-byte records,
-  // buffer is aligned to next 16-bit border.
+  // Keep the on-paper 16-byte padding; the file itself is not transformed.
   print->bufsize=(print->origsize+15) & 0xFFFFFFF0;
-  print->buf=(uchar *)malloc(print->bufsize);
-  if (print->buf==NULL) {
-    Reporterror("Low memory");
-    Stopprinting(print);
-    return; };
-  // Allocate read buffer. Because compression may take significant time, I
-  // pack data in pieces of PACKLEN bytes.
-  print->readbuf=(uchar *)malloc(PACKLEN);
-  if (print->readbuf==NULL) {
-    Reporterror("Low memory");
-    Stopprinting(print);
-    return; };
+  print->buf=(uchar *)calloc(print->bufsize,1);
+  if (!print->buf) {Reporterror("Low memory");Stopprinting(print);return;}
   // Set options.
-  print->compression=pb_compression;
-  print->encryption=pb_encryption;
   print->printheader=pb_printheader;
   print->printborder=pb_printborder;
   print->redundancy=pb_redundancy;
@@ -270,166 +249,25 @@ static void Preparefiletoprint(t_printdata *print)
 
 
 
-// Initializes bzip2 compression engine.
-static void Preparecompressor(t_printdata *print) {
-  int success;
-  // Check whether compression is requested at all.
-  if (print->compression==0) {
-    print->step++;
-    return; 
-  };
-  // Initialize compressor. On error, I silently disable compression.
-  memset(&print->bzstream,0,sizeof(print->bzstream));
-  success=BZ2_bzCompressInit(&print->bzstream,
-    (print->compression==1?1:9),0,0);
-  if (success!=BZ_OK) {
-    print->compression=0;              // Disable compression
-    print->step++;
-    return; };
-  print->bzstream.next_out=(char *)print->buf;
-  print->bzstream.avail_out=print->bufsize;
-  // Step finished.
+// Read the original bytes without compression or encryption.
+static void Readfiledata(t_printdata *print) {
+  uint32_t size=print->origsize-print->readsize;
+  if(size>PACKLEN) size=PACKLEN;
+  if(fread(print->buf+print->readsize,1,size,print->hfile)!=size) {
+    Reporterror("Unable to read file");Stopprinting(print);return;
+  }
+  print->readsize+=size;
+  if(print->readsize==print->origsize) print->step++;
+}
+
+static void Finishreading(t_printdata *print) {
+  int status=fclose(print->hfile); print->hfile=NULL;
+  if(status!=0) {Reporterror("Unable to close input file");Stopprinting(print);return;}
+  print->datasize=print->origsize;
+  print->alignedsize=print->bufsize;
+  print->bufcrc=Crc16(print->buf,print->alignedsize);
   print->step++;
-};
-
-
-
-// Compresses file.
-static void Readandcompress(t_printdata *print) {
-  int success;
-  uint32_t size,l;
-  // Read next piece of data.
-  size=print->origsize-print->readsize;
-  if (size>PACKLEN) size=PACKLEN;
-  //success=ReadFile(print->hfile,print->readbuf,size,&l,NULL);
-  l = fread ((void*)print->readbuf, sizeof(uchar), size, print->hfile);
-                    
-  if (l!=size) {
-    Reporterror("Unable to read file");
-    Stopprinting(print);
-    return; };
-  // If compression is active, compress next piece of data. Otherwise, just
-  // copy data to buffer.
-  if (print->compression) {
-    Message("Compressing file",(print->readsize+size)*100/print->origsize);
-    print->bzstream.next_in=(char *)print->readbuf;
-    print->bzstream.avail_in=size;
-    success=BZ2_bzCompress(&print->bzstream,BZ_RUN);
-    if (print->bzstream.avail_in!=0 || success!=BZ_RUN_OK) {
-      Reporterror("Unable to compress data. Try to disable compression.");
-      Stopprinting(print);
-      return; };
-    print->readsize+=size;
-    // If compression runs out of memory, probably the data is already packed.
-    // Silently restart without compression.
-    if (print->readsize<print->origsize && print->bzstream.avail_out==0) {
-      BZ2_bzCompressEnd(&print->bzstream);
-      print->compression=0;
-      //SetFilePointer(print->hfile,0,NULL,FILE_BEGIN);
-      rewind(print->hfile);
-      print->readsize=0;
-      return;
-    }; }
-  else {
-    //Message("Reading file", (print->readsize+size)*100/print->origsize);
-    memcpy(print->buf+print->readsize,print->readbuf,size);
-    print->readsize+=size; };
-  // If all data is read, finish step.
-  if (print->readsize==print->origsize)
-    print->step++;
-  ;
-};
-
-
-
-// Finishes compression (may take significant time) and closes input file.
-static void Finishcompression(t_printdata *print) {
-  int success;
-  uint32_t l;
-  // Finish compression.
-  if (print->compression) {
-    success=BZ2_bzCompress(&print->bzstream,BZ_FINISH);
-    // If compression runs out of memory, probably the data is already packed.
-    // Silently restart without compression.
-    if (success==BZ_FINISH_OK && print->bzstream.avail_out==0) {
-      BZ2_bzCompressEnd(&print->bzstream);
-      print->compression=0;
-      //SetFilePointer(print->hfile,0,NULL,FILE_BEGIN);
-      rewind(print->hfile);
-      print->readsize=0;
-      print->step--;
-      return; };
-    // If compression routine reports other error, stop processing.
-    if (success!=BZ_STREAM_END) {
-      Reporterror("Unable to compress data. Try to disable compression.");
-      Stopprinting(print);
-      return; };
-    // File compressed. Update size of compressed data and finish.
-    print->datasize=print->bzstream.total_out_lo32;
-    BZ2_bzCompressEnd(&print->bzstream); }
-  else
-    print->datasize=print->origsize;
-  // Align size of (compressed) data to next 16-byte border. Note that bzip2
-  // doesn't mind if data passed to decompressor is longer than expected.
-  print->alignedsize=(print->datasize+15) & 0xFFFFFFF0;
-  // Zero aligning bytes.
-  for (l=print->datasize; l<print->alignedsize; l++)
-    print->buf[l]='\0';
-  // Close file.
-  //CloseHandle(print->hfile);
-  fclose(print->hfile);
-  print->hfile=NULL;
-  // Free read buffer. We no longer need it.
-  free(print->readbuf);
-  print->readbuf=NULL;
-  // Step finished.
-  print->step++;
-};
-
-
-
-// Encrypts data. I ask to enter password individually for each file. AES-256
-// encryption is very fast, so we don't need to split it into several steps.
-static void Encryptdata(t_printdata *print) {
-//  int n;
-//  uint32_t l;
-//  aes_context ctx;
-//  // Calculate 16-bit CRC of possibly compressed but unencrypted data. I use
-//  // it to verify data after decryption: the safe way to assure that password
-//  // is entered correctly.
-//  print->bufcrc=Crc16(print->buf,print->alignedsize);
-//  // Skip rest of this step if encryption is not required.
-//  if (print->encryption==0) {
-//    print->step++;
-//    return; };
-//  // Ask for password. If user cancels, skip file.
-//  Message("Encrypting data...",0);
-//  // If we want encryption, securely get it from user here
-//  if (Getpassword() != 0) {
-//    Reporterror("Cancelling encryption and continuing");
-//    print->encryption=0;
-//    print->step++;
-//    return; 
-//  }
-//
-//  // Encryption routine expects that password is exactly PASSLEN bytes long.
-//  // Fill rest of the password with zeros.
-//  n=strlen(pb_password);
-//  while (n<PASSLEN) pb_password[n++]=0;
-//  // Initialize encryption.
-//  memset(&ctx,0,sizeof(ctx));
-//  aes_set_key(&ctx,(uchar *)pb_password,256);
-//  // Encrypt data. AES works with 16-byte data chunks.
-//  for (l=0; l<print->alignedsize; l+=16)
-//    aes_encrypt(&ctx,print->buf+l,print->buf+l);
-//  // Clear password and encryption control block. We no longer need them.
-//  memset(pb_password,0,sizeof(pb_password));
-//  memset(&ctx,0,sizeof(ctx));
-//  // Step finished.
-  print->step++;
-};
-
-
+}
 
 // Prepares for printing. Despite its size, this routine is very quick.
 static void Initializeprinting(t_printdata *print) {
@@ -441,10 +279,7 @@ static void Initializeprinting(t_printdata *print) {
   print->superdata.addr=SUPERBLOCK;
   print->superdata.datasize=print->alignedsize;
   print->superdata.origsize=print->origsize;
-  if (print->compression)
-    print->superdata.mode|=PBM_COMPRESSED;
-  if (print->encryption)
-    print->superdata.mode|=PBM_ENCRYPTED;
+  print->superdata.mode=0;
   //mask windows values, otherwise leave *nix mode data alone
   print->superdata.attributes=(uchar)(print->attributes &
     (FILE_ATTRIBUTE_READONLY|FILE_ATTRIBUTE_HIDDEN|
@@ -461,7 +296,7 @@ static void Initializeprinting(t_printdata *print) {
   printf("Encoding %s to bitmap\n", fil);
   size_t dataSize = sizeof(print->superdata.name);
   strncpy(print->superdata.name,fil,dataSize);
-  print->superdata.name[dataSize] = '\0'; // ensure that later string operations don't overflow into binary data
+  print->superdata.name[dataSize-1] = '\0'; // ensure that later string operations don't overflow into binary data
   // If printing to paper, ask user to select printer and, if necessary, adjust
   // parameters. I do not enforce high quality or high resolution - the user is
   // the king (well, a sort of).
@@ -574,8 +409,12 @@ static void Initializeprinting(t_printdata *print) {
     //  height=pagesetup.ptPaperSize.y*print->ppiy/2540; 
     //}
     //else {                             // Use default A4 size (210x292 mm)
-    width=print->ppix*8270/1000;
-    height=print->ppiy*11690/1000; 
+    double sw=pb_paperwidth*print->ppix/25.4, sh=pb_paperheight*print->ppiy/25.4;
+    if (!isfinite(sw) || !isfinite(sh) || sw<128 || sh<128 || sw>32768 || sh>32768 || sw*sh>268435456) {
+      Reporterror("Sheet bitmap too small or too large (maximum 256 MiB)"); Stopprinting(print); return;
+    }
+    width=print->sheetwidth=(int)(sw+0.5);
+    height=print->sheetheight=(int)(sh+0.5); 
     //};
     //print->hfont6=NULL;
     //print->hfont10=NULL;
@@ -599,10 +438,10 @@ static void Initializeprinting(t_printdata *print) {
   //}
   //else {
   //FIXME should left border also be ppix/2
-  print->borderleft=print->ppix;
-  print->borderright=print->ppix/2;
-  print->bordertop=print->ppiy/2;
-  print->borderbottom=print->ppiy/2; 
+  print->borderleft=(int)(pb_margins[0]*print->ppix/25.4+0.5);
+  print->borderright=(int)(pb_margins[1]*print->ppix/25.4+0.5);
+  print->bordertop=(int)(pb_margins[2]*print->ppiy/25.4+0.5);
+  print->borderbottom=(int)(pb_margins[3]*print->ppiy/25.4+0.5); 
   //}
   // Calculate size of printable area, in the pixels of printer's resolution.
   width-=
@@ -612,10 +451,10 @@ static void Initializeprinting(t_printdata *print) {
   // Calculate data point raster (dx,dy) and size of the point (px,py) in the
   // pixels of printer's resolution. Note that pixels, at least in theory, may
   // be non-rectangular.
-  dx=max(print->ppix/pb_dpi,2);
-  px=max((dx*pb_dotpercent)/100,1);
-  dy=max(print->ppiy/pb_dpi,2);
-  py=max((dy*pb_dotpercent)/100,1);
+  dx=max((print->ppix+pb_dpi/2)/pb_dpi,2);
+  px=max((dx*pb_dotpercent+50)/100,1);
+  dy=max((print->ppiy+pb_dpi/2)/pb_dpi,2);
+  py=max((dy*pb_dotpercent+50)/100,1);
   // Calculate width of the border around the data grid.
   if (print->printborder)
     print->border=dx*16;
@@ -627,7 +466,7 @@ static void Initializeprinting(t_printdata *print) {
   // page must contain at least redundancy data blocks plus 1 recovery checksum,
   // and redundancy+1 superblocks with name and size of the data. Data and
   // recovery blocks should be placed into different columns.
-  nx=(width-px-2*print->border)/(NDOT*dx+3*dx);
+  nx=(width-3-px-2*print->border)/(NDOT*dx+3*dx);
   ny=(height-py-2*print->border)/(NDOT*dy+3*dy);
   if (nx<print->redundancy+1 || ny<3 || nx*ny<2*print->redundancy+2) {
     Reporterror("Printable area is too small, reduce borders or block size");
@@ -676,7 +515,7 @@ static void Initializeprinting(t_printdata *print) {
     print->drawbits=(uchar *)malloc(width*height);
     if (print->drawbits==NULL) {
       Reporterror("Low memory, can't create bitmap");
-      return;
+      Stopprinting(print); return;
     };
   };
   // Calculate the total size of useful data, bytes, that fits onto the page.
@@ -695,6 +534,7 @@ static void Initializeprinting(t_printdata *print) {
   print->py=py;
   print->nx=nx;
   print->ny=ny;
+  printf("Sheet: %d x %d pixels at %d DPI; actual dot density %.2f DPI\n",print->sheetwidth,print->sheetheight,print->ppix,(double)print->ppix/dx);
   // Start printing.
   //if (print->outbmp[0]=='\0') {
   //  if (pagesetup.hDevNames!=NULL)
@@ -923,47 +763,30 @@ static void Printnextpage(t_printdata *print) {
       Stopprinting(print);
       return; 
     };
-    // Create and save bitmap file header.
-    success=1;
+    // Copy the grid onto a full white sheet, preserving physical margins.
+    int stride=(print->sheetwidth+3)&~3;
+    size_t bytes=(size_t)stride*print->sheetheight;
+    uchar *sheet=malloc(bytes);
+    if(!sheet) {fclose(hbmpfile);Reporterror("Low memory");Stopprinting(print);return;}
+    memset(sheet,255,bytes);
+    int bottom=print->sheetheight-print->bordertop-height;
+    for(int row=0;row<height;row++)
+      memcpy(sheet+(size_t)(bottom+row)*stride+print->borderleft,bits+(size_t)row*width,width);
     n=sizeof(BITMAPINFOHEADER)+256*sizeof(RGBQUAD);
-    bmfh.bfType=CHAR_BM; //First two bytes are 'BM'
-    bmfh.bfSize=sizeof(bmfh)+n+width*height;
-    bmfh.bfReserved1=bmfh.bfReserved2=0;
+    memset(&bmfh,0,sizeof(bmfh));
+    bmfh.bfType=CHAR_BM; bmfh.bfSize=sizeof(bmfh)+n+bytes;
     bmfh.bfOffBits=sizeof(bmfh)+n;
-    u = fwrite (&bmfh, sizeof(char), sizeof(bmfh), hbmpfile);
-    //if (WriteFile(hbmpfile,&bmfh,sizeof(bmfh),&u,NULL)==0 || u!=sizeof(bmfh))
-    if (u != sizeof(bmfh)) {
-      success=0;
-    }
-    // Update and save bitmap info header and palette.
-    if (success) {
-      pbmi=(BITMAPINFO *)print->bmi;
-      pbmi->bmiHeader.biWidth=width;
-      pbmi->bmiHeader.biHeight=height;
-      pbmi->bmiHeader.biXPelsPerMeter=(print->ppix*10000)/254;
-      pbmi->bmiHeader.biYPelsPerMeter=(print->ppiy*10000)/254;
-      u = fwrite (pbmi, sizeof(char), n, hbmpfile);
-      if (u != (uint32_t)n ) {
-        success = 0;
-      }
-      //if (WriteFile(hbmpfile,pbmi,n,&u,NULL)==0 || u!=(uint32_t)n) 
-      //  success=0;
-      // Save bitmap data.
-      if (success) {
-        u = fwrite (bits, sizeof(char), width*height, hbmpfile);
-        //if (WriteFile(hbmpfile,bits,width*height,&u,NULL)==0 ||
-        //  u!=(uint32_t)(width*height))
-        if (u != (ulong)(width*height))
-          success=0;
-      };
-      fclose(hbmpfile);
-      //CloseHandle(hbmpfile);
-      if (success==0) {
-        Reporterror("Unable to save bitmap");
-        Stopprinting(print);
-        return;
-      };
-    };
+    pbmi=(BITMAPINFO *)print->bmi;
+    pbmi->bmiHeader.biWidth=print->sheetwidth;
+    pbmi->bmiHeader.biHeight=print->sheetheight;
+    pbmi->bmiHeader.biSizeImage=bytes;
+    pbmi->bmiHeader.biXPelsPerMeter=(print->ppix*10000+127)/254;
+    pbmi->bmiHeader.biYPelsPerMeter=(print->ppiy*10000+127)/254;
+    success=fwrite(&bmfh,1,sizeof(bmfh),hbmpfile)==sizeof(bmfh) &&
+      fwrite(pbmi,1,n,hbmpfile)==(size_t)n && fwrite(sheet,1,bytes,hbmpfile)==bytes;
+    if(fclose(hbmpfile)!=0) success=0;
+    free(sheet);
+    if(!success) {Reporterror("Unable to save bitmap");Stopprinting(print);return;}
     // Page printed, proceed with next.
     print->frompage++;
   };
@@ -978,28 +801,22 @@ void Nextdataprintingstep(t_printdata *print) {
     case 1:                            // Open file and allocate buffers
       Preparefiletoprint(print);
       break;
-    case 2:                            // Initialize compression engine
-      Preparecompressor(print);
+    case 2:                            // Read next piece of data
+      Readfiledata(print);
       break;
-    case 3:                            // Read next piece of data and compress
-      Readandcompress(print);
+    case 3:                            // Close input and calculate CRC
+      Finishreading(print);
       break;
-    case 4:                            // Finish compression and close file
-      Finishcompression(print);
-      break;
-    case 5:                            // Encrypt data
-      Encryptdata(print);
-      break;
-    case 6:                            // Initialize printing
+    case 4:
       Initializeprinting(print);
       break;
-    case 7:                            // Print pages, one at a time
+    case 5:
       Printnextpage(print);
       break;
-    case 8:                            // Finish printing.
+    case 6:
       Stopprinting(print);
       Message("",0);
-      print->step=0;
+      break;
     default: break;                    // Internal error
   };
   //if (print->step==0) Updatebuttons(); // Right or wrong, decoding finished

@@ -22,9 +22,6 @@
 // with this program. If not, see <http://www.gnu.org/licenses/>.             //
 //                                                                            //
 //                                                                            //
-// Note that bzip2 compression/decompression library, which is the part of    //
-// this project, is covered by different license, which, in my opinion, is    //
-// compatible with GPL.                                                       //
 //                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -32,8 +29,6 @@
 #include <windows.h>
 #endif
 #include <stdlib.h>
-#include "bzlib.h"
-#include "aes.h"
 #include "Bitmap.h"
 
 #include "paperbak.h"
@@ -42,143 +37,61 @@
 
 
 
-// Processes data from the scanner.
-int ProcessDIB(void *hdata,int offset) {
-  int i,j,sizex,sizey,ncolor;
-  uchar scale[256],*data,*pdata,*pbits;
-  BITMAPINFO *pdib;
-  pdib=(BITMAPINFO *)hdata;
-  if (pdib==NULL)
-    return -1;                         // Something is wrong with this DIB
-  // Check that bitmap is more or less valid.
-  if (pdib->bmiHeader.biSize!=sizeof(BITMAPINFOHEADER) ||
-    pdib->bmiHeader.biPlanes!=1 ||
-    (pdib->bmiHeader.biBitCount!=8 && pdib->bmiHeader.biBitCount!=24) ||
-    (pdib->bmiHeader.biBitCount==24 && pdib->bmiHeader.biClrUsed!=0) ||
-    pdib->bmiHeader.biCompression!=BI_RGB ||
-    pdib->bmiHeader.biWidth<128 || pdib->bmiHeader.biWidth>32768 ||
-    pdib->bmiHeader.biHeight<128 || pdib->bmiHeader.biHeight>32768
-  ) {
-    //GlobalUnlock(hdata);
-    return -1; // Not a known bitmap!
-  };                      
-  sizex=pdib->bmiHeader.biWidth;
-  sizey=pdib->bmiHeader.biHeight;
-  ncolor=pdib->bmiHeader.biClrUsed;
-  // Convert bitmap to 8-bit grayscale. Note that scan lines are DWORD-aligned.
-  data=(uchar *)malloc(sizex*sizey);
-  if (data==NULL) {
-    //GlobalUnlock(hdata);
-    return -1; };
-  if (pdib->bmiHeader.biBitCount==8) {
-    // 8-bit bitmap with palette.
-    if (ncolor>0) {
-      for (i=0; i<ncolor; i++) {
-        scale[i]=(uchar)((pdib->bmiColors[i].rgbBlue+
-        pdib->bmiColors[i].rgbGreen+pdib->bmiColors[i].rgbRed)/3);
-      }; }
-    else {
-      for (i=0; i<256; i++) scale[i]=(uchar)i; };
-    if (offset==0)
-      offset=sizeof(BITMAPINFOHEADER)+ncolor*sizeof(RGBQUAD);
-    pdata=data;
-    for (j=0; j<sizey; j++) {
-      offset=(offset+3) & 0xFFFFFFFC;
-      pbits=((uchar *)(pdib))+offset;
-      for (i=0; i<sizex; i++) {
-        *pdata++=scale[*pbits++]; };
-      offset+=sizex;
-    }; }
-  else {
-    // 24-bit bitmap without palette.
-    if (offset==0)
-      offset=sizeof(BITMAPINFOHEADER)+ncolor*sizeof(RGBQUAD);
-    pdata=data;
-    for (j=0; j<sizey; j++) {
-      offset=(offset+3) & 0xFFFFFFFC;
-      pbits=((uchar *)(pdib))+offset;
-      for (i=0; i<sizex; i++) {
-        *pdata++=(uchar)((pbits[0]+pbits[1]+pbits[2])/3);
-        pbits+=3; };
-      offset+=sizex*3;
-    };
-  };
-  // Decode bitmap. This is what we are for here.
-  Startbitmapdecoding(&pb_procdata,data,sizex,sizey);
-  // Free original bitmap and report success.
-  //GlobalUnlock(hdata);
-  return 0;
-};
 
-
-
-// Opens and decodes bitmap. Returns 0 on success and -1 on error.
+// Validate all offsets before converting to bottom-up grayscale. With --force,
+// missing pixel bytes in a truncated BMP are white, never uninitialized memory.
 int Decodebitmap(char *path) {
-  int i,size;
-  char s[TEXTLEN+MAXPATH],fil[MAXFILE],ext[MAXEXT];
-  uchar *data,buf[sizeof(BITMAPFILEHEADER)+sizeof(BITMAPINFOHEADER)];
-  FILE *f;
-  BITMAPFILEHEADER *pbfh;
-  BITMAPINFOHEADER *pbih;
-  //HCURSOR prevcursor;
-  // Ask for file name.
-  //if (path==NULL || path[0]=='\0') {
-  //  if (Selectinbmp()!=0) return -1; }
-  //else {
-  strncpy(pb_inbmp,path,sizeof(pb_inbmp));
-  pb_inbmp[sizeof(pb_inbmp)-1]='\0';
-  fnsplit(pb_inbmp,NULL,NULL,fil,ext);
-  sprintf(s,"Reading %s%s...",fil,ext);
-  Message(s,0);
-  //Updatebuttons();
-  // Open file and verify that this is the valid bitmap of known type.
-  f=fopen(pb_inbmp,"rb");
-  if (f==NULL) {                       // Unable to open file
-    sprintf(s,"Unable to open %s%s",fil,ext);
-    Reporterror(s);
-    return -1; };
-  // Reading 100-MB bitmap may take many seconds. Let's inform user by changing
-  // mouse pointer.
-  //prevcursor=SetCursor(LoadCursor(NULL,IDC_WAIT));
-  i=fread(buf,1,sizeof(buf),f);
-  //SetCursor(prevcursor);
-  if (i!=sizeof(buf)) {                // Unable to read file
-    sprintf(s,"Unable to read %s%s",fil,ext);
-    Reporterror(s);
-    fclose(f); 
-    return -1; 
-  };
-  pbfh=(BITMAPFILEHEADER *)buf;
-  pbih=(BITMAPINFOHEADER *)(buf+sizeof(BITMAPFILEHEADER));
-  if (pbfh->bfType!=CHAR_BM ||
-    pbih->biSize!=sizeof(BITMAPINFOHEADER) || pbih->biPlanes!=1 ||
-    (pbih->biBitCount!=8 && pbih->biBitCount!=24) ||
-    (pbih->biBitCount==24 && pbih->biClrUsed!=0) ||
-    pbih->biCompression!=BI_RGB ||
-    pbih->biWidth<128 || pbih->biWidth>32768 ||
-    pbih->biHeight<128 || pbih->biHeight>32768
-  ) {                                  // Invalid bitmap type
-    sprintf(s,"Unsupported bitmap type: %s%s",fil,ext);
-    Reporterror(s);
-    fclose(f); return -1; };
-  // Allocate buffer and read file.
-  fseek(f,0,SEEK_END);
-  size=ftell(f)-sizeof(BITMAPFILEHEADER);
-  data=(uchar *)malloc(size);
-  if (data==NULL) {                    // Unable to allocate memory
-    Reporterror("Low memory");
-    fclose(f); return -1; };
-  fseek(f,sizeof(BITMAPFILEHEADER),SEEK_SET);
-  i=fread(data,1,size,f);
-  fclose(f);
-  if (i!=size) {                       // Unable to read bitmap
-    sprintf(s,"Unable to read %s%s",fil,ext);
-    Reporterror(s);
-    free(data);
-    return -1; };
-  // Process bitmap.
-  ProcessDIB(data,pbfh->bfOffBits-sizeof(BITMAPFILEHEADER));
-  free(data);
-  return 0;
-};
-
+  FILE *f=fopen(path,"rb");
+  BITMAPFILEHEADER file;
+  BITMAPINFOHEADER info;
+  uchar palette[256], *data=NULL, *row=NULL;
+  int result=-1;
+  if(!f) {Reporterror("Unable to open bitmap");return -1;}
+  if(fread(&file,1,sizeof(file),f)!=sizeof(file) || fread(&info,1,sizeof(info),f)!=sizeof(info)) goto invalid;
+  if(file.bfType!=CHAR_BM || info.biSize!=sizeof(info) || info.biPlanes!=1 ||
+     (info.biBitCount!=8 && info.biBitCount!=24) || info.biCompression!=BI_RGB ||
+     info.biWidth<128 || info.biWidth>32768 || info.biHeight==0 ||
+     info.biHeight>32768 || info.biHeight< -32768 ||
+     (info.biBitCount==24 && info.biClrUsed!=0)) goto invalid;
+  int width=info.biWidth,height=abs(info.biHeight);
+  size_t stride=((size_t)width*(info.biBitCount/8)+3)&~(size_t)3;
+  if((size_t)width*height>268435456) goto invalid;
+  unsigned colors=info.biBitCount==8?(info.biClrUsed?info.biClrUsed:256):0;
+  if(colors>256 || file.bfOffBits<sizeof(file)+sizeof(info)+colors*sizeof(RGBQUAD)) goto invalid;
+  memset(palette,255,sizeof(palette));
+  for(unsigned i=0;i<colors;i++) {
+    RGBQUAD color;
+    if(fread(&color,1,sizeof(color),f)!=sizeof(color)) goto invalid;
+    palette[i]=(color.rgbRed+color.rgbGreen+color.rgbBlue)/3;
+  }
+  if(fseek(f,0,SEEK_END)!=0) goto invalid;
+  long length=ftell(f);
+  if(length<0 || (size_t)length<file.bfOffBits) goto invalid;
+  int truncated=(size_t)length-file.bfOffBits<stride*height;
+  if(truncated && !pb_force) {Reporterror("Truncated bitmap; use --force to accept the damaged page");goto done;}
+  if(truncated) fprintf(stderr,"Warning: truncated bitmap; missing pixels treated as white\n");
+  if(fseek(f,file.bfOffBits,SEEK_SET)!=0) goto invalid;
+  data=malloc((size_t)width*height); row=malloc(stride);
+  if(!data || !row) {Reporterror("Low memory");goto done;}
+  int badindex=0;
+  for(int y=0;y<height;y++) {
+    size_t got=fread(row,1,stride,f);
+    uchar *dst=data+(size_t)(info.biHeight>0?y:height-1-y)*width;
+    for(int x=0;x<width;x++) {
+      size_t pos=(size_t)x*(info.biBitCount/8);
+      if(pos+info.biBitCount/8>got) dst[x]=255;
+      else if(info.biBitCount==24) dst[x]=(row[pos]+row[pos+1]+row[pos+2])/3;
+      else if(row[pos]<colors) dst[x]=palette[row[pos]];
+      else {dst[x]=255;badindex=1;}
+    }
+  }
+  if(ferror(f)) {Reporterror("Bitmap read error");goto done;}
+  if(badindex && !pb_force) goto invalid;
+  if(badindex) fprintf(stderr,"Warning: invalid palette indices treated as white\n");
+  Startbitmapdecoding(&pb_procdata,data,width,height); data=NULL; result=0;
+  goto done;
+invalid:
+  Reporterror("Invalid or unsupported BMP (expected uncompressed 8-bit or 24-bit)");
+done:
+  free(row);free(data);fclose(f);return result;
+}

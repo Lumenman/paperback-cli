@@ -22,15 +22,10 @@
 // with this program. If not, see <http://www.gnu.org/licenses/>.             //
 //                                                                            //
 //                                                                            //
-// Note that bzip2 compression/decompression library, which is the part of    //
-// this project, is covered by different license, which, in my opinion, is    //
-// compatible with GPL.                                                       //
 //                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
 #include <stdlib.h>
-#include "bzlib.h"
-#include "aes.h"
 
 #include "paperbak.h"
 #include "Resource.h"

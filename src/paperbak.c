@@ -23,7 +23,8 @@
 
 void Reporterror(const char *input) 
 {
-  printf("%s\n", input);
+  fprintf(stderr,"%s\n", input);
+  pb_errors++;
 }
 
 
@@ -39,72 +40,15 @@ void Message(const char *input, int progress)
 // Formerly standard case insentitive cstring compare
 int strnicmp (const char *str1, const char *str2, size_t len)
 {
-  char s1[len], s2[len];
-  strcpy (s1, str1);
-  strcpy (s2, str2);
-  for (int i = 0; i < len; i++) {
-      s1[i] = tolower(s1[i]);
-      s2[i] = tolower(s1[i]);
-      if (s1[i] < s2[i])      //s1 less than s2, return negative
-        return -1;
-      else if (s1[i] > s2[i]) //s1 more than s2, return positive
-        return 1;
+  for (size_t i=0;i<len;i++) {
+    int a=tolower((unsigned char)str1[i]), b=tolower((unsigned char)str2[i]);
+    if (a!=b) return a-b;
+    if (!a) return 0;
   }
-
-  // if all characters are the same, return 0
   return 0;
 }
 
 
-
-// returns 0 on success, -1 on failure
-int Getpassword()
-{
-  // LINUX-ONLY, deprecated, and only gets 8 character long password
-  //char * pw = getpass("Enter encryption password: ");
-  //int pwLength = strlen(pw);
-
-  // Crossplatform
-  printf ("Enter encryption password: ");
-  char pw[PASSLEN];
-  int pwLength = 0;
-  char ch = '\0';
-  printf ("\033[8m"); //set terminal to hide typing
-  while (pwLength < PASSLEN) {
-    ch = getchar();
-    if (ch == '\r' || ch == '\n' || ch == EOF)
-      break;
-
-    if (pwLength < (PASSLEN - 1)) {
-      pw[pwLength] = ch;
-      pw[pwLength + 1] = '\0';
-    }
-
-    ++pwLength;
-  }
-  printf ("\033[28m"); //set terminal to display typing
- 
-  int status = -1;
-  printf ("strlen(pw): %i\n", strlen(pw));
-  fwrite (pw, PASSLEN, 1, stdout);
-  printf ("\n");
-  if (pwLength > 0 && pwLength <= (PASSLEN - 1) ) {
-    // put password into global password variable
-    memcpy (pb_password, pw, PASSLEN);
-    status = 0; //success
-  }
-  else {
-    Reporterror("Password must be 32 characters or less");
-    status = -1; //failure
-  }
-  
-  printf ("strlen(pb_password): %i\n", strlen(pb_password));
-  fwrite (pb_password, PASSLEN, 1, stdout);
-  printf ("\n");
-  // overwrite pw for security FIXME with random data
-  memset (pw, 0, PASSLEN);
-  return status;
-}
 
 int max (int a, int b) 
 {

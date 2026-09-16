@@ -13,6 +13,7 @@
 
 # executables
 paperback-cli
+test_core
 runtests
 
 # files from tools

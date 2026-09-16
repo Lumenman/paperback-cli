@@ -22,9 +22,6 @@
 // with this program. If not, see <http://www.gnu.org/licenses/>.             //
 //                                                                            //
 //                                                                            //
-// Note that bzip2 compression/decompression library, which is the part of    //
-// this project, is covered by different license, which, in my opinion, is    //
-// compatible with GPL.                                                       //
 //                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -33,8 +30,6 @@
 #endif
 #include <stdlib.h>
 #include <math.h>
-#include "bzlib.h"
-#include "aes.h"
 
 #include "paperbak.h"
 #include "Resource.h"
@@ -154,12 +149,17 @@ static float Findpeaks(int *h,int n,float *bestpeak,float *beststep) {
   return moment/sn;
 };
 
+// Confidence of a byte that contains no dot yet.
+#define MAXMARGIN 0x7FFFFFFF
+
 // Given grid of recognized dots, extracts saved information. Returns number of
 // corrected erorrs (0..16) on success and 17 if information is not readable.
 static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
   t_procdata *pdata) {
   int i,j,k,q,r,factor,lcorr,c,cmin,cmax,limit;
   int grid1[NDOT][NDOT],answer,bestanswer;
+  int m,n,e,best,margin[sizeof(t_data)],eras[ECC_SIZE];
+  t_data raw;
   static int lastgood;
   ushort crc;
   t_data uncorrected,bestresult;
@@ -191,7 +191,7 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
       limit=0;
       for (j=0; j<NDOT; j++) {
         for (i=0; i<NDOT; i++) {
-          c=grid[i][j]*factor;
+          c=grid[j][i]*factor;
           if (i>0) c-=grid[j][i-1]; else c-=cmax;
           if (i<31) c-=grid[j][i+1]; else c-=cmax;
           if (j>0) c-=grid[j-1][i]; else c-=cmax;
@@ -201,8 +201,11 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
         };
       };
       limit=limit/1024+lcorr*factor;
-      // Extract data according to the selected orientation.
+      // Extract data according to the selected orientation. Distance of the
+      // dot from the threshold is the confidence; the weakest dot decides the
+      // confidence of the byte it belongs to.
       memset(result,0,sizeof(t_data));
+      for (n=0; n<(int)sizeof(t_data); n++) margin[n]=MAXMARGIN;
       for (j=0; j<NDOT; j++) {
         for (i=0; i<NDOT; i++) {
           switch (r) {
@@ -218,6 +221,9 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
           if (c<limit) {
             ((uint32_t *)result)[j]|=1<<i;
           };
+          m=c-limit; if (m<0) m=-m;
+          n=j*sizeof(uint32_t)+i/8;    // Byte of the block holding this dot
+          if (m<margin[n]) margin[n]=m;
         };
       };
       // XOR with grid that corrects mean brightness.
@@ -228,7 +234,24 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
         memcpy(&uncorrected,result,sizeof(t_data));
       else
         memcpy(&pdata->uncorrected,result,sizeof(t_data));
+      raw=*result;
       answer=Decode8((uchar *)result,NULL,0,127);
+      if (answer<0 ||
+        (ushort)(Crc16((uchar *)result,NDATA+4)^0x55AA)!=result->crc) {
+        // Decoding failed. Reed-Solomon corrects 32 bytes of known position
+        // against only 16 of unknown position, so retry with the 32 least
+        // reliable bytes declared erasures. Their contents are ignored, and
+        // the CRC below still decides whether the result is accepted.
+        for (e=0; e<ECC_SIZE; e++) {
+          best=0;
+          for (n=1; n<(int)sizeof(t_data); n++) {
+            if (margin[n]<margin[best]) best=n; };
+          eras[e]=best+127;            // Decode8 counts in codeword positions
+          margin[best]=MAXMARGIN; };
+        *result=raw;
+        answer=Decode8((uchar *)result,eras,ECC_SIZE,127);
+        if (answer>16) answer=16;      // Caller reads 17 and above as failure
+      };
       if (answer<0) answer=17;
       // Verify data for correctness by calculating CRC.
       if (answer<=16) {

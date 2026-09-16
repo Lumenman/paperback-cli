@@ -22,9 +22,6 @@
 // with this program. If not, see <http://www.gnu.org/licenses/>.             //
 //                                                                            //
 //                                                                            //
-// Note that bzip2 compression/decompression library, which is the part of    //
-// this project, is covered by different license, which, in my opinion, is    //
-// compatible with GPL.                                                       //
 //                                                                            //
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -36,9 +33,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <utime.h>
-#include "bzlib.h"
-#include "aes.h"
-#include "pwd2key.h"
 
 #include "paperbak.h"
 #include "Resource.h"
@@ -67,6 +61,17 @@ int Startnextpage(t_superblock *superblock) {
   t_fproc *pf;
   // Check whether file is already in the list of processed files. If not,
   // initialize new descriptor.
+  if(superblock->mode!=0) {
+    Reporterror("Legacy compressed/encrypted pages are not supported"); return -1;
+  }
+  if (!superblock->datasize || superblock->datasize>MAXSIZE ||
+      !superblock->origsize || superblock->origsize>MAXSIZE ||
+      !superblock->pagesize || superblock->pagesize>MAXSIZE || superblock->pagesize%NDATA ||
+      superblock->page>(superblock->datasize+superblock->pagesize-1)/superblock->pagesize ||
+      !superblock->page || superblock->ngroup>NGROUPMAX ||
+      superblock->origsize>superblock->datasize) {
+    Reporterror("Invalid page metadata"); return -1;
+  }
   freeslot=-1;
   for (slot=0,pf=pb_fproc; slot<NFILE; slot++,pf++) {
     if (pf->busy==0) {                 // Empty descriptor
@@ -74,7 +79,7 @@ int Startnextpage(t_superblock *superblock) {
       continue; };
 
     
-    if (strnicmp(pf->name,superblock->name,64)!=0)
+    if (memcmp(pf->name,superblock->name,64)!=0 || pf->filecrc!=superblock->filecrc)
       continue;                        // Different file name
     if (pf->mode!=superblock->mode)
       continue;                        // Different compression mode
@@ -103,8 +108,7 @@ int Startnextpage(t_superblock *superblock) {
     pf->datavalid=(uchar *)calloc(pf->nblock, sizeof(uchar));
     pf->data=(uchar *)calloc(pf->nblock*NDATA, sizeof(uchar));
     if (pf->datavalid==NULL || pf->data==NULL) {
-      if (pf->datavalid!=NULL) free(pf->datavalid);
-      if (pf->data!=NULL) free(pf->data);
+      Closefproc(slot);
       Reporterror("Low memory");
       return -1; 
     };
@@ -133,7 +137,10 @@ int Startnextpage(t_superblock *superblock) {
   // Invalidate page limits and report success.
   pf=pb_fproc+slot;
   pf->page=superblock->page;
-  pf->ngroup=superblock->ngroup;
+  if(superblock->ngroup && pf->ngroup!=superblock->ngroup) {
+    for(i=0;i<pf->nblock;i++) if(pf->datavalid[i]==2) pf->datavalid[i]=0;
+    pf->ngroup=superblock->ngroup;
+  }
   pf->minpageaddr=0xFFFFFFFF;
   pf->maxpageaddr=0;
   //Updatefileinfo(slot,pf);
@@ -162,8 +169,8 @@ int Addblock(t_block *block,int slot) {
       memcpy(pf->data+block->addr,block->data,NDATA);
       pf->datavalid[i]=1;              // Valid data
       pf->ndata++; };
-    pf->minpageaddr=min(pf->minpageaddr,block->addr);
-    pf->maxpageaddr=max(pf->maxpageaddr,block->addr+NDATA); }
+    if(block->addr<pf->minpageaddr) pf->minpageaddr=block->addr;
+    if(block->addr+NDATA>pf->maxpageaddr) pf->maxpageaddr=block->addr+NDATA; }
   else {
     // Data recovery block. I write it to all free locations within the group.
     if (block->recsize!=(uint32_t)(pf->ngroup*NDATA))
@@ -174,12 +181,12 @@ int Addblock(t_block *block,int slot) {
     i=block->addr/NDATA;
     for (j=i; j<i+pf->ngroup; j++) {
       if (j>=pf->nblock)
-        return -1;                     // Data outside the data size
+        break;                     // Data outside the data size
       if (pf->datavalid[j]!=0) continue;
       memcpy(pf->data+j*NDATA,block->data,NDATA);
       pf->datavalid[j]=2; };           // Valid recovery data
-    pf->minpageaddr=min(pf->minpageaddr,block->addr);
-    pf->maxpageaddr=max(pf->maxpageaddr,block->addr+block->recsize);
+    if(block->addr<pf->minpageaddr) pf->minpageaddr=block->addr;
+    if(block->addr+block->recsize>pf->maxpageaddr) pf->maxpageaddr=block->addr+block->recsize;
   };
   // Report success.
   return 0;
@@ -203,35 +210,28 @@ int Finishpage(int slot,int ngood,int nbad,uint32_t nrestored) {
   pf->badblocks+=nbad;
   pf->restoredbytes+=nrestored;
 
-  printf("ngood: %d\n", pb_procdata.ngood);
-  printf("nbad: %d\n", pb_procdata.nbad);
-  printf("nsuper: %d\n", pb_procdata.nsuper);
-  printf("nrestored: %d\n", pb_procdata.nrestored);
-
   // Restore bad blocks if corresponding recovery blocks are available (max. 1
   // per group).
-  if (pf->ngroup>0) {
+  if (pf->ngroup>0 && pf->minpageaddr!=0xFFFFFFFF) {
     rmin=(pf->minpageaddr/(NDATA*pf->ngroup))*pf->ngroup;
     rmax=(pf->maxpageaddr/(NDATA*pf->ngroup))*pf->ngroup;
     // Walk groups of data on current page, one by one.
     for (r=rmin; r<=rmax; r+=pf->ngroup) {
-      if (r+pf->ngroup>pf->nblock)
+      if (r>=pf->nblock)
         break;                         // Inconsistent data
       // Count blocks with recovery data in the group.
-      nrec=0;
-      for (i=r; i<r+pf->ngroup; i++) {
-        if (pf->datavalid[i]==2) {
-          nrec++; irec=i;
-          pf->datavalid[i]=0;          // Prepare for next round
-        };
-      };
-      if (nrec==1) {
+      nrec=0; irec=-1;
+      for (i=r; i<r+pf->ngroup && i<pf->nblock; i++) {
+        if(pf->datavalid[i]!=1) nrec++;
+        if(pf->datavalid[i]==2) irec=i;
+      }
+      if(nrec==1 && irec>=0) {
         // Exactly one block in group is missing, recovery is possible.
         pr=pf->data+irec*NDATA;
         // Invert recovery data.
         for (j=0; j<NDATA; j++) *pr++^=0xFF;
         // XOR recovery data with good data blocks.
-        for (i=r; i<r+pf->ngroup; i++) {
+        for (i=r; i<r+pf->ngroup && i<pf->nblock; i++) {
           if (i==irec) continue;
           pr=pf->data+irec*NDATA;
           pd=pf->data+i*NDATA;
@@ -281,159 +281,68 @@ int Finishpage(int slot,int ngood,int nbad,uint32_t nrestored) {
       Saverestoredfile(slot,0);
     };
   };
-  return 0; ////////////////////////////////////////////////////////////////////
+  return pf->ndata==pf->nblock ? 0 : (nrempages ? nrempages : 1);
 };
 
-// Saves file with specified index and closes file descriptor (if force is 1,
-// attempts to save data even if file is not yet complete). Returns 0 on
-// success and -1 on error.
+// Saves accumulated data after all scans. Returns 0 for complete output,
+// 2 for partial output, and -1 on error. The caller owns the descriptor.
 int Saverestoredfile(int slot,int force) {
-  int n,success;
-  ushort filecrc;
-  uint32_t l,length;
-  uchar *bufout,*data,*tempdata,*salt,key[AESKEYLEN],iv[16];
-  t_fproc *pf;
-  aes_decrypt_ctx ctx[1];
-  //HANDLE hfile;
-  FILE *hfile;
-  if (slot<0 || slot>=NFILE)
-    return -1;                         // Invalid index of file descriptor
-  pf=pb_fproc+slot;
-  if (pf->busy==0 || pf->nblock==0)
-    return -1;                         // Index points to unused descriptor
-  if (pf->ndata!=pf->nblock && force==0)
-    return -1;                         // Still incomplete data
-  Message("",0);
-  // If data is encrypted, decrypt it to temporary buffer. Decryption in place
-  // is possible, but the whole data would be lost if password is incorrect.
-  if (pf->mode & PBM_ENCRYPTED) {
-    if (pf->datasize & 0x0000000F) {
-      Reporterror("Encrypted data is not aligned");
-      return -1; 
-    };
-
-    if (Getpassword()!=0) {
-      Reporterror("Cancelling bitmap decoding");
-      return -1;                       // User cancelled decryption
-    }
-
-    tempdata=(uchar *)malloc(pf->datasize);
-    if (tempdata==NULL) {
-      Reporterror("Low memory, can't decrypt data");
-      return -1; 
-    };
-    n=strlen(pb_password);
-    salt=(uchar *)(pf->name)+32; // hack: put the salt & iv at the end of the name field
-    derive_key((const uchar *)pb_password, n, salt, 16, 524288, key, AESKEYLEN);
-    memset(pb_password,0,sizeof(pb_password));
-    memset(ctx,0,sizeof(aes_decrypt_ctx));
-    if(aes_decrypt_key((const uchar *)key,AESKEYLEN,ctx) == EXIT_FAILURE) {
-      memset(key,0,AESKEYLEN);
-      Reporterror("Failed to set decryption key");
-      return -1; 
-    };
-    memset(key,0,AESKEYLEN);
-    memcpy(iv, salt+16, 16); // the second 16-byte block in 'salt' is the IV
-    if(aes_cbc_decrypt(pf->data,tempdata,pf->datasize,iv,ctx) == EXIT_FAILURE) {
-      Reporterror("Failed to decrypt data");
-      memset(ctx,0,sizeof(aes_decrypt_ctx));
-      return -1; 
-    };
-    memset(ctx,0,sizeof(aes_decrypt_ctx));
-
-
-    filecrc=Crc16(tempdata,pf->datasize);
-    if (filecrc!=pf->filecrc) {
-      Reporterror("Invalid password, please try again");
-      free (tempdata);
-      return -1; 
-    }
-    else {
-      free (pf->data);
-      pf->data=tempdata;
-      pf->mode&=~PBM_ENCRYPTED;
-    };
-  };
-  // If data is compressed, unpack it to temporary buffer.
-  if ((pf->mode & PBM_COMPRESSED)==0) {
-    // Data is not compressed.
-    data=pf->data; length=pf->origsize;
-    bufout=NULL; 
+  if(slot<0 || slot>=NFILE || !pb_fproc[slot].busy) return -1;
+  t_fproc *pf=&pb_fproc[slot];
+  if(pf->mode!=0 || !pf->data || !pf->datavalid || !pf->origsize ||
+     pf->origsize>pf->datasize || pf->datasize>(size_t)pf->nblock*NDATA) {
+    Reporterror("Unsupported or invalid file metadata"); return -1;
   }
-  else {
-    // Data is compressed. Create temporary buffer.
-    if (pf->origsize==0)
-      pf->origsize=pf->datasize*4;     // Weak attempt to recover
-    bufout=(uchar *)malloc(pf->origsize);
-    if (bufout==NULL) {
-      Reporterror("Low memory");
-      return -1; };
-    // Unpack data.
-    length=pf->origsize;
-    success=BZ2_bzBuffToBuffDecompress((char *)bufout,(uint *)&length,
-        (char*)pf->data,pf->datasize,0,0);
-    if (success!=BZ_OK) {
-      free (bufout);
-      Reporterror("Unable to unpack data");
-      return -1; };
-    data=bufout; };
-  // Ask user for file name.
-  // FIXME selectoutfile must be initialized prior/by arg
-  //if (pf->name!=NULL) {    
-  //  if (bufout!=NULL) free (bufout);
-  //  return -1; 
-  //};
-  // Open file and save data.
-  //hfile=CreateFile(pb_outfile,GENERIC_WRITE,0,NULL,
-  //  CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
-  hfile = fopen (pb_outfile, "wb");
-  if (hfile==NULL) {
-    if (bufout!=NULL) 
-      free (bufout);
-    Reporterror("Unable to create file");
-    return -1; 
-  };
-
-  //WriteFile(hfile,data,length,&l,NULL);
-  l = fwrite (data, sizeof(char), length, hfile); 
-  // Restore old modification date and time.
+  int incomplete=pf->ndata!=pf->nblock;
+  int badcrc=!incomplete && Crc16(pf->data,pf->datasize)!=pf->filecrc;
+  int partial=incomplete || badcrc;
+  if(partial && !force) {
+    Reporterror(incomplete?"Incomplete file":"File checksum mismatch"); return -1;
+  }
+  if(badcrc) fprintf(stderr,"Warning: file checksum mismatch; saving recovered bytes unchanged\n");
+  uchar *data=pf->data;
+  uint32_t length=pf->origsize;
+  const char *path=pb_outfile;
+  char mapname[MAXPATH+8];
+  for(int i=0;i<pf->nblock;i++)
+    if(pf->datavalid[i]!=1) memset(data+(size_t)i*NDATA,0,NDATA);
+  FILE *out=fopen(path,"wb");
+  if(!out) {Reporterror("Unable to create output");goto failed;}
+  int ok=fwrite(data,1,length,out)==length;
+  if(fclose(out)!=0) ok=0;
+  if(!ok) {Reporterror("Output write error");goto failed;}
+  {
+    // Rewrite the map on every save, so a later complete restore cannot leave stale gaps.
+    snprintf(mapname,sizeof(mapname),"%s.map",path);
+    FILE *map=fopen(mapname,"w");
+    if(!map) {Reporterror("Unable to create missing-range map");goto failed;}
+    fprintf(map,"Format: original file, missing bytes filled with zeros\nStatus: %s\nFile checksum: %s\nOriginal bytes: %u\nRecovered blocks: %d/%d\nMissing ranges: start inclusive, end exclusive; offsets in original file\n",
+      partial?"DAMAGED":"COMPLETE",incomplete?"not checked (missing blocks)":badcrc?"MISMATCH (damage locations unknown)":"OK",
+      length,pf->ndata,pf->nblock);
+    for(int i=0;i<pf->nblock;) {
+      if(pf->datavalid[i]==1) {i++;continue;}
+      uint32_t start=i*NDATA;
+      while(i<pf->nblock && pf->datavalid[i]!=1) i++;
+      uint32_t end=i*NDATA;if(end>length) end=length;
+      if(start<end) fprintf(map,"%u %u\n",start,end);
+    }
+    ok=!ferror(map);if(fclose(map)!=0) ok=0;
+    if(!ok) {Reporterror("Missing-range map write error");goto failed;}
+  }
+  if(!partial) {
 #ifdef _WIN32
-  // open HANDLE and set file time
-  HANDLE handleFile=CreateFile(pb_outfile,GENERIC_WRITE,0,NULL,
-      CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
-  if (handleFile==INVALID_HANDLE_VALUE) {
-    if (bufout!=NULL) 
-      free(bufout);
-    Reporterror("Unable to open handle to set file time");
-    return -1; 
-  };
-  SetFileTime(handleFile,&pf->modified,&pf->modified,&pf->modified);
-  // Close file and restore old basic attributes.
-  CloseHandle(hfile);
-  SetFileAttributes(pb_outfile,pf->attributes);
-  if (bufout!=NULL) 
-    free(bufout);
-  if (l!=length) {
-    Reporterror("I/O error");
-    return -1; 
-  };
-#elif __linux__
-  // Set file time
-  struct stat bmpStat;
-  struct utimbuf newTime;
-  stat(pb_outfile, &bmpStat);
-  newTime.actime = bmpStat.st_atime;
-  newTime.modtime = convertToPosixTime(pf->modified);
-  utime(pb_outfile, &newTime);
-
-  // Restore mode
-  mode_t mode = convertToPosixAttributes(pf->attributes);
-  chmod (pb_outfile, convertToPosixAttributes(pf->attributes));
-
+    HANDLE handle=CreateFileA(path,FILE_WRITE_ATTRIBUTES,FILE_SHARE_READ|FILE_SHARE_WRITE,NULL,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,NULL);
+    FILETIME modified={pf->modified.dwLowDateTime,pf->modified.dwHighDateTime};
+    if(handle!=INVALID_HANDLE_VALUE) {SetFileTime(handle,NULL,NULL,&modified);CloseHandle(handle);}
+    SetFileAttributesA(path,pf->attributes?pf->attributes:FILE_ATTRIBUTE_NORMAL);
+#elif defined(__linux__)
+    struct stat st; struct utimbuf times;
+    if(stat(path,&st)==0) {times.actime=st.st_atime;times.modtime=convertToPosixTime(pf->modified);utime(path,&times);}
+    chmod(path,convertToPosixAttributes(pf->attributes));
 #endif
-  // Close file descriptor and report success.
-  Closefproc(slot);
-  Message("File saved",0);
-  return 0;
-};
-
+  }
+  printf("Saved %s%s\n",path,partial?" (DAMAGED)":"");
+  return partial?2:0;
+failed:
+  return -1;
+}
