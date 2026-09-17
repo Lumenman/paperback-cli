@@ -112,6 +112,12 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     run('--decode','-i',root/'multi.bmp','-p',len(pages),'-o',output)
     assert output.read_bytes()==source.read_bytes()
     run('--decode','-o',output,*reversed(pages),pages[0]);assert output.read_bytes()==source.read_bytes()
+    # Regression: 44100 bytes on A4 at 100 DPI fills page one exactly; the
+    # 16-byte padding in the header needs a second page for the last block.
+    edge=root/'edge.bin';edge.write_bytes((bytes(range(256))*173)[:44100])
+    run('--encode','-i',edge,'-o',root/'edge.bmp','--dpi',100)
+    edgepages=sorted(root.glob('edge_*.bmp'));assert len(edgepages)==2
+    run('--decode','-o',output,*edgepages);assert output.read_bytes()==edge.read_bytes()
     other=root/'other.bin';other.write_bytes(bytes(range(255,-1,-1))*320)
     run('--encode','-i',other,'-o',root/'other.bmp','--dpi',100)
     run('--decode','--force','-o',output,pages[0],root/'other_0001.bmp',code=1)

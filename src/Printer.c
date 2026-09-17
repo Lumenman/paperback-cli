@@ -218,12 +218,12 @@ static void Preparefiletoprint(t_printdata *print)
   // Get time of last file modification.
   print->modified = convertToFileTime(fileInfo.st_mtime);
   // Get original (uncompressed) file size.
-  print->origsize = fileInfo.st_size;
-  if (print->origsize==0 || print->origsize>MAXSIZE) {
+  if (fileInfo.st_size<=0 || fileInfo.st_size>MAXSIZE) {
     Reporterror("Invalid file size");
     Stopprinting(print);
     return;
   }
+  print->origsize = (uint32_t)fileInfo.st_size;
 #endif
  
  // Open input file.
@@ -263,7 +263,7 @@ static void Readfiledata(t_printdata *print) {
 static void Finishreading(t_printdata *print) {
   int status=fclose(print->hfile); print->hfile=NULL;
   if(status!=0) {Reporterror("Unable to close input file");Stopprinting(print);return;}
-  print->datasize=print->origsize;
+  print->datasize=print->bufsize;  // padded size: this is what goes on paper
   print->alignedsize=print->bufsize;
   print->bufcrc=Crc16(print->buf,print->alignedsize);
   print->step++;
@@ -525,6 +525,11 @@ static void Initializeprinting(t_printdata *print) {
   print->pagesize=((nx*ny-print->redundancy-2)/(print->redundancy+1))*
     print->redundancy*NDATA;
   print->superdata.pagesize=print->pagesize;
+  if ((print->datasize+print->pagesize-1)/print->pagesize >
+    (uint32_t)(print->topage-print->frompage)+1) {
+    Reporterror("File needs more pages than allowed, increase page size or dot density");
+    Stopprinting(print);
+    return; };
   // Save calculated parameters.
   print->width=width;
   print->height=height;
