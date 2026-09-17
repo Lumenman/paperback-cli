@@ -256,6 +256,10 @@ typedef struct t_procdata {            // Descriptor of processed data
   int            nposx;                // Number of blocks to scan in X
   int            nposy;                // Number of blocks to scan in X
   int            posx,posy;            // Next block to scan
+  int            pass;                 // 0: raster scan, 1: retry failed blocks
+  int            usepred;              // Place search window by neighbours
+  signed char    *qmap;                // Answer per position, -2 if not tried
+  float          *orgx,*orgy;          // Measured block origin, sheared pixels
   t_data         uncorrected;          // Data before ECC for block display
   t_block        *blocklist;           // List of blocks recognized on page
   t_superblock   superblock;           // Page header
@@ -343,6 +347,7 @@ extern int       pb_printheader;          // Print header and footer
 extern int       pb_printborder;          // Border around bitmap
 extern int       pb_autosave;             // Autosave completed files
 extern int       pb_bestquality;          // Determine best quality
+extern int       pb_qualitymap;           // Print per-block decode map
   
 extern int       pb_marginunits;          // 0:undef, 1:inches, 2:millimeters
 extern int       pb_marginleft;           // Left printer page margin

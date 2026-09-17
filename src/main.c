@@ -20,6 +20,7 @@ int       pb_printheader;
 int       pb_printborder;
 int       pb_autosave;
 int       pb_bestquality;
+int       pb_qualitymap;
 int       pb_marginunits;
 int       pb_marginleft;
 int       pb_marginright;
@@ -58,13 +59,14 @@ static void help(void) {
  "  -r, --redundancy N    One recovery block per N data blocks, 2..10; default 5\n"
  "  -b, --border          Black outer border\n"
  "  --header              Print a text header and footer; costs grid rows\n"
+ "  --quality-map         Print a per-block decode map for every scan\n"
  "  -h, --help            Help\n"
  "  -v, --version         Version\n"
  "Output uses the exact -o path; OUTPUT.map records gaps and integrity.\n"
  "Exit: 0 complete, 1 error, 2 damaged output saved. Print at actual size (100%).");
 }
 int main(int argc,char **argv) {
- enum { PAPER=256,SIZE,LANDSCAPE,MARGIN,LEFT,RIGHT,TOP,BOTTOM,IMAGE_DPI,HEADER,EXPECT };
+ enum { PAPER=256,SIZE,LANDSCAPE,MARGIN,LEFT,RIGHT,TOP,BOTTOM,IMAGE_DPI,HEADER,EXPECT,QMAP };
  struct option options[]={
  {"encode",0,0,'e'},{"decode",0,0,'D'},{"input",1,0,'i'},{"output",1,0,'o'},
  {"pages",1,0,'p'},{"force",0,0,'f'},{"dpi",1,0,'d'},{"dotsize",1,0,'s'},
@@ -73,7 +75,8 @@ int main(int argc,char **argv) {
  {"paper-size",1,0,SIZE},{"landscape",0,0,LANDSCAPE},{"margin",1,0,MARGIN},
  {"margin-left",1,0,LEFT},{"margin-right",1,0,RIGHT},{"margin-top",1,0,TOP},
  {"margin-bottom",1,0,BOTTOM},{"image-dpi",1,0,IMAGE_DPI},
- {"header",0,0,HEADER},{"expect",1,0,EXPECT},{0,0,0,0}};
+ {"header",0,0,HEADER},{"expect",1,0,EXPECT},
+ {"quality-map",0,0,QMAP},{0,0,0,0}};
  const char **inputs=calloc(argc,sizeof(*inputs));
  int count=0,mode=0,pages=0,landscape=0,c,status=0;
  if(!inputs) return 1;
@@ -95,6 +98,7 @@ int main(int argc,char **argv) {
    case 'v': puts("PaperBack CLI 1.3 (GPL); PaperBack by Oleh Yuschuk"); free(inputs); return 0;
    case IMAGE_DPI: pb_resx=pb_resy=number(optarg,80,2400); if(pb_resx<0) goto invalid; break;
    case HEADER: pb_printheader=1; break;
+   case QMAP: pb_qualitymap=1; break;
    case EXPECT: {
     size_t n=strlen(optarg); if(n!=SHA256_HEXLEN) goto invalid;
     for(size_t i=0;i<n;i++) {

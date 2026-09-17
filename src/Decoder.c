@@ -592,15 +592,27 @@ static void Preparefordecoding(t_procdata *pdata) {
   pdata->bufy=(int *)malloc(dy*sizeof(int));
   pdata->blocklist=(t_block *)
     malloc(pdata->nposx*pdata->nposy*sizeof(t_block));
+  // Per-position decoding result and measured block position. The results
+  // drive the second decoding pass and the quality map, the positions let
+  // each block be searched for relative to its decoded neighbours.
+  pdata->qmap=(signed char *)malloc(pdata->nposx*pdata->nposy);
+  pdata->orgx=(float *)malloc(pdata->nposx*pdata->nposy*sizeof(float));
+  pdata->orgy=(float *)malloc(pdata->nposx*pdata->nposy*sizeof(float));
   // Check that we have enough memory.
   if (pdata->buf1==NULL || pdata->buf2==NULL ||
-    pdata->bufx==NULL || pdata->bufy==NULL || pdata->blocklist==NULL
+    pdata->bufx==NULL || pdata->bufy==NULL || pdata->blocklist==NULL ||
+    pdata->qmap==NULL || pdata->orgx==NULL || pdata->orgy==NULL
   ) {
     if (pdata->buf1!=NULL) free(pdata->buf1);
     if (pdata->buf2!=NULL) free(pdata->buf2);
     if (pdata->bufx!=NULL) free(pdata->bufx);
     if (pdata->bufy!=NULL) free(pdata->bufy);
     if (pdata->blocklist!=NULL) free(pdata->blocklist);
+    if (pdata->qmap!=NULL) free(pdata->qmap);
+    if (pdata->orgx!=NULL) free(pdata->orgx);
+    if (pdata->orgy!=NULL) free(pdata->orgy);
+    pdata->buf1=pdata->buf2=NULL; pdata->bufx=pdata->bufy=NULL;
+    pdata->blocklist=NULL; pdata->qmap=NULL; pdata->orgx=pdata->orgy=NULL;
     Reporterror("Low memory");
     pdata->step=0;
     return; };
@@ -624,8 +636,42 @@ static void Preparefordecoding(t_procdata *pdata) {
   pdata->nsuper=0;
   pdata->nrestored=0;
   pdata->posx=pdata->posy=0;           // First block to scan
+  pdata->pass=0;                       // First decoding pass
+  memset(pdata->qmap,-2,pdata->nposx*pdata->nposy);
   // Step finished.
   pdata->step++;
+};
+
+// Predicts the search window origin for block (posx,posy) from the measured
+// position of a neighbour that has already been decoded. Only neighbours whose
+// CRC checked out are trusted: a block that was located but stayed unreadable
+// is often unreadable precisely because it was located in the wrong place.
+// Returns the number of such neighbours, so that the caller can tell a block
+// surrounded by good data from one sitting off the edge of the raster, and 0
+// when there is none and the global grid is all there is to go on.
+static int Predictorigin(t_procdata *pdata,int posx,int posy,
+  float *x0,float *y0
+) {
+  static const int dx[4]={-1,0,1,0},dy[4]={0,-1,0,1};
+  int k,nx,ny,i,n=0;
+  if (pdata->qmap==NULL)
+    return 0;
+  for (k=0; k<4; k++) {
+    nx=posx+dx[k]; ny=posy+dy[k];
+    if (nx<0 || nx>=pdata->nposx || ny<0 || ny>=pdata->nposy)
+      continue;
+    i=ny*pdata->nposx+nx;
+    if (pdata->qmap[i]<0 || pdata->qmap[i]>=17)
+      continue;
+    // Carry the measured block boundary over whole grid steps. Only the phase
+    // comes from the neighbour, the step stays global: a step measured on a
+    // single block is too noisy to integrate over a page.
+    if (n==0) {
+      *x0=pdata->orgx[i]+pdata->xstep*(posx-nx)-pdata->xstep*pdata->blockborder;
+      *y0=pdata->orgy[i]-pdata->ystep*(posy-ny)-pdata->ystep*pdata->blockborder; };
+    n++;
+  };
+  return n;
 };
 
 // The most important routine, converts scanned blocks into data. Used both by
@@ -635,7 +681,7 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
   int i,j,x,y,x0,y0,dx,dy,sizex,sizey,*bufx,*bufy;
   int c,cmin,cmax,dotsize,shift,shiftmax,sum,answer,bestanswer;
   float xangle,yangle,xbmp,ybmp,xres,yres,sharpfactor;
-  float xpeak,xstep,ypeak,ystep,halfdot;
+  float xpeak,xstep,ypeak,ystep,halfdot,predx,predy;
   float sy,syy,disp,dispmin,dispmax;
   uchar *psrc,*pdest,*data,g[9][NDOT][NDOT],grid[NDOT][NDOT];
   t_data uncorrected,bestresult;
@@ -651,9 +697,14 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
   bufx=pdata->bufx;
   bufy=pdata->bufy;
   // Get block coordinates in the bitmap. Note that bitmap in memory is placed
-  // upside down.
-  x0=pdata->xpeak+pdata->xstep*(posx-pdata->blockborder);
-  y0=pdata->ypeak+pdata->ystep*(pdata->nposy-posy-1-pdata->blockborder);
+  // upside down. The global grid stays in charge: averaged over the whole page
+  // it is less noisy than a phase carried over from a single neighbour. Only
+  // when the caller has already failed with it is the neighbour asked instead.
+  if (!pdata->usepred || !Predictorigin(pdata,posx,posy,&predx,&predy)) {
+    predx=pdata->xpeak+pdata->xstep*(posx-pdata->blockborder);
+    predy=pdata->ypeak+pdata->ystep*(pdata->nposy-posy-1-pdata->blockborder); };
+  x0=predx;
+  y0=predy;
   dx=pdata->bufdx;
   dy=pdata->bufdy;
   // Rotate selected block to 'unsharp' buffer using bilinear interpolation.
@@ -724,6 +775,13 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
   pdata->blockxstep=xstep;
   pdata->blockypeak=ypeak;
   pdata->blockystep=ystep;
+  // Remember where this block really sits, so that its neighbours can be
+  // searched for relative to it instead of relative to the page centre.
+  if (pdata->orgx!=NULL &&
+    posx>=0 && posx<pdata->nposx && posy>=0 && posy<pdata->nposy
+  ) {
+    pdata->orgx[posy*pdata->nposx+posx]=x0+xpeak;
+    pdata->orgy[posy*pdata->nposx+posx]=y0+ypeak; };
   // Calculate dot step and correct peaks so that they point to first dot.
   xstep=xstep/(NDOT+3.0);
   xpeak+=2.0*xstep;
@@ -842,9 +900,10 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
 };
 
 static void Decodenextblock(t_procdata *pdata) {
-  int answer,ngroup,percent;
+  int answer,second,ngroup,percent,index,old;
+  float predx,predy;
   char s[TEXTLEN];
-  t_data result;
+  t_data result,retry;
 
   // Display percent of executed data and, if known, data name in progress bar.
   //if (pdata->superblock.name[0]=='\0')
@@ -857,11 +916,40 @@ static void Decodenextblock(t_procdata *pdata) {
   //  (pdata->nposx*pdata->nposy);
   //  Message(s,percent);
   
+  index=pdata->posy*pdata->nposx+pdata->posx;
+  old=pdata->qmap[index];
+  // On the second pass only the blocks that failed are worth another try:
+  // their neighbours are decoded by now, so the search window lands right.
+  if (pdata->pass>0 && old>=0 && old<17)
+    goto finish;
   // Decode block.
   answer=Decodeblock(pdata,pdata->posx,pdata->posy,&result);
+  // A retry that locates nothing is no reason to discard the first attempt.
+  if (answer<0 && old>=0)
+    goto finish;
+  // A block the global grid could not deliver gets a second attempt at the
+  // position its decoded neighbours predict - one grid step away instead of
+  // half a page, so local paper warp and feed drift do not accumulate.
+  // Two decoded neighbours or more: this position is surrounded by data and
+  // worth the extra work. One or none, and it is most likely simply off the
+  // edge of the raster, where a retry would only cost time.
+  if ((answer<0 || answer>=17) &&
+    Predictorigin(pdata,pdata->posx,pdata->posy,&predx,&predy)>=2
+  ) {
+    pdata->usepred=1;
+    second=Decodeblock(pdata,pdata->posx,pdata->posy,&retry);
+    pdata->usepred=0;
+    if (second>=0 && second<17) {
+      answer=second;
+      result=retry; }
+    else if (answer<0)
+      answer=second; };
+  pdata->qmap[index]=(signed char)(answer<0?-1:answer);
   // If we are unable to locate block, probably we are outside the raster.
   if (answer<0)
     goto finish;
+  if (pdata->pass>0 && old>=17)
+    pdata->nbad--;                     // The earlier failure is superseded
   // If this is the very first block located on the page, show it in the block
   // display window.
   //if (pdata->ngood==0 && pdata->nbad==0 && pdata->nsuper==0)
@@ -908,8 +996,36 @@ finish:
     pdata->posx=0;
     pdata->posy++;
     if (pdata->posy>=pdata->nposy) {
-      pdata->step++;                   // Page processed
+      if (pdata->pass==0 && pdata->nbad>0) {
+        pdata->pass=1;                 // Retry the failed blocks
+        pdata->posx=pdata->posy=0; }
+      else
+        pdata->step++;                 // Page processed
     };
+  };
+};
+
+// Prints one character per block: a digit for a decoded block (how many bytes
+// its ECC had to repair), '+' for ten or more repairs, '#' for a block that
+// was located but stayed unreadable, '.' for one the grid search never found.
+// The pattern names the cause: dots in clusters mean the raster was lost,
+// hashes scattered over the page mean the dots themselves are too poor.
+static void Printqualitymap(t_procdata *pdata) {
+  int x,y,q;
+  if (pdata->qmap==NULL)
+    return;
+  printf("Block map %dx%d "
+    "(digit: ECC repairs, +: 10 or more, #: unreadable, .: not located)\n",
+    pdata->nposx,pdata->nposy);
+  for (y=0; y<pdata->nposy; y++) {
+    for (x=0; x<pdata->nposx; x++) {
+      q=pdata->qmap[y*pdata->nposx+x];
+      if (q<0)        putchar('.');
+      else if (q>=17) putchar('#');
+      else if (q>9)   putchar('+');
+      else            putchar('0'+q);
+    };
+    putchar('\n');
   };
 };
 
@@ -917,6 +1033,8 @@ finish:
 // to Preparefordecoding().
 static void Finishdecoding(t_procdata *pdata) {
   int i,fileindex;
+  if (pb_qualitymap)
+    Printqualitymap(pdata);
   // Pass gathered data to file processor.
   if (pdata->superblock.addr==0)
     Reporterror("Page label is not readable");
@@ -999,7 +1117,16 @@ void Freeprocdata(t_procdata *pdata) {
     pdata->bufy=NULL; };
   if (pdata->blocklist!=NULL) {
     free(pdata->blocklist);
-    pdata->blocklist=NULL;
+    pdata->blocklist=NULL; };
+  if (pdata->qmap!=NULL) {
+    free(pdata->qmap);
+    pdata->qmap=NULL; };
+  if (pdata->orgx!=NULL) {
+    free(pdata->orgx);
+    pdata->orgx=NULL; };
+  if (pdata->orgy!=NULL) {
+    free(pdata->orgy);
+    pdata->orgy=NULL;
   };
 };
 

@@ -144,5 +144,27 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     other=root/'other.bin';other.write_bytes(bytes(range(255,-1,-1))*320)
     run('--encode','-i',other,'-o',root/'other.bmp','--dpi',100)
     run('--decode','--force','-o',output,pages[0],root/'other_0001.bmp',code=1)
+    # --quality-map draws one character per block. It is the first thing to
+    # look at when a scan fails: a band of dots means the raster was lost
+    # there, hashes scattered over the sheet mean the dots themselves are
+    # unreadable - two different causes needing two different fixes.
+    def blockmap(scan,code=0):
+        got=run('--decode','--quality-map','-i',scan,'-o',output,code=code)
+        rows=[l for l in got.stdout.splitlines()
+              if len(l)>10 and set(l)<=set('.#+0123456789')]
+        assert rows and len(set(map(len,rows)))==1,got.stdout
+        return rows
+    clean=blockmap(page)
+    assert any('0' in row for row in clean)
+    assert output.read_bytes()==original
+    # Wiping a band of the scan must show up as whole rows of dots: the raster
+    # is gone there, so those blocks are never located in the first place.
+    b,w,h,off,stride=bmp(page)
+    hole=bytearray(b)
+    for y in range(h-420,h-315):       # One block row; the bitmap is bottom-up.
+        hole[off+y*stride:off+y*stride+w]=bytes([255])*w
+    holed=root/'holed.bmp';holed.write_bytes(hole)
+    blank=lambda rows:sum(set(row)=={'.'} for row in rows)
+    assert blank(blockmap(holed,code=1))>blank(clean)
 print('All CLI checks passed')
 
