@@ -326,7 +326,14 @@ int Saverestoredfile(int slot,int force) {
   {
     // Rewrite the map on every save, so a later complete restore cannot leave stale gaps.
     snprintf(mapname,sizeof(mapname),"%s.map",path);
+#ifdef __linux__
+    oldmask=umask(0077);
+#endif
     FILE *map=fopen(mapname,"w");
+#ifdef __linux__
+    umask(oldmask);
+    if(map) chmod(mapname,0600);       // an existing map keeps its old mode otherwise
+#endif
     if(!map) {Reporterror("Unable to create missing-range map");goto failed;}
     fprintf(map,"Format: original file, missing bytes filled with zeros\nStatus: %s\nFile checksum: %s\nOriginal bytes: %u\nRecovered blocks: %d/%d\nMissing ranges: start inclusive, end exclusive; offsets in original file\n",
       partial?"DAMAGED":"COMPLETE",incomplete?"not checked (missing blocks)":badcrc?"MISMATCH (damage locations unknown)":"OK",

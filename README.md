@@ -44,7 +44,7 @@ The last command reads `scan_0001.bmp` through `scan_0004.bmp`. A numbered seque
 
 Scans may be repeated, supplied out of order, or rotated by 180 degrees. Rotation by multiples of 90 degrees and mirroring are detected by the decoder; small skew is also supported. Successfully decoded blocks and recovery blocks accumulate across all scans in a single invocation. Repeated scans can fill each other's gaps. This combines decoded blocks, not image pixels. Scans identified as different files cannot be written to the same output.
 
-Output is saved after processing the entire input list. The summary reports recovered/missing blocks and, when page geometry is consistent, page numbers to rescan. A readable page header is required to associate its blocks with a file. Completely unreadable pages cannot contribute data. On Linux the restored file is set to mode 0600: a page stores a single attribute bit, so original permissions cannot be reproduced and are never widened.
+Output is saved after processing the entire input list. The summary reports recovered/missing blocks and, when page geometry is consistent, page numbers to rescan. A readable page header is required to associate its blocks with a file. Completely unreadable pages cannot contribute data. On Linux the restored file and its `.map` are set to mode 0600: a page stores a single attribute bit, so original permissions cannot be reproduced and are never widened.
 
 ## Accept damaged pages with --force
 
