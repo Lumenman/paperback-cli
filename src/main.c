@@ -26,6 +26,7 @@ int       pb_marginright;
 int       pb_margintop;
 int       pb_marginbottom;
 int pb_errors, pb_force;
+char pb_expect[SHA256_HEXLEN+1];
 double pb_paperwidth=210, pb_paperheight=297;
 double pb_margins[4]={10,10,10,10};
 static int number(const char *s,int low,int high) {
@@ -44,6 +45,7 @@ static void help(void) {
  "       paperback-cli --decode -i SCAN.bmp [-i SCAN2.bmp ...] -o FILE\n"
  "       paperback-cli --decode -o FILE SCAN1.bmp SCAN2.bmp ...\n"
  "  -p, --pages N         Read base_0001.bmp through base_NNNN.bmp\n"
+ "  --expect HEX          Check the restored file against a SHA-256 digest\n"
  "  -f, --force           Accept damaged pages; save to -o with zero-filled gaps\n"
  "  --paper NAME          A3, A4 (default), A5, A6, Letter, Legal, Tabloid\n"
  "  --paper-size WxHmm    Custom sheet size (also WxHin)\n"
@@ -62,7 +64,7 @@ static void help(void) {
  "Exit: 0 complete, 1 error, 2 damaged output saved. Print at actual size (100%).");
 }
 int main(int argc,char **argv) {
- enum { PAPER=256,SIZE,LANDSCAPE,MARGIN,LEFT,RIGHT,TOP,BOTTOM,IMAGE_DPI,HEADER };
+ enum { PAPER=256,SIZE,LANDSCAPE,MARGIN,LEFT,RIGHT,TOP,BOTTOM,IMAGE_DPI,HEADER,EXPECT };
  struct option options[]={
  {"encode",0,0,'e'},{"decode",0,0,'D'},{"input",1,0,'i'},{"output",1,0,'o'},
  {"pages",1,0,'p'},{"force",0,0,'f'},{"dpi",1,0,'d'},{"dotsize",1,0,'s'},
@@ -71,7 +73,7 @@ int main(int argc,char **argv) {
  {"paper-size",1,0,SIZE},{"landscape",0,0,LANDSCAPE},{"margin",1,0,MARGIN},
  {"margin-left",1,0,LEFT},{"margin-right",1,0,RIGHT},{"margin-top",1,0,TOP},
  {"margin-bottom",1,0,BOTTOM},{"image-dpi",1,0,IMAGE_DPI},
- {"header",0,0,HEADER},{0,0,0,0}};
+ {"header",0,0,HEADER},{"expect",1,0,EXPECT},{0,0,0,0}};
  const char **inputs=calloc(argc,sizeof(*inputs));
  int count=0,mode=0,pages=0,landscape=0,c,status=0;
  if(!inputs) return 1;
@@ -93,6 +95,14 @@ int main(int argc,char **argv) {
    case 'v': puts("PaperBack CLI 1.3 (GPL); PaperBack by Oleh Yuschuk"); free(inputs); return 0;
    case IMAGE_DPI: pb_resx=pb_resy=number(optarg,80,2400); if(pb_resx<0) goto invalid; break;
    case HEADER: pb_printheader=1; break;
+   case EXPECT: {
+    size_t n=strlen(optarg); if(n!=SHA256_HEXLEN) goto invalid;
+    for(size_t i=0;i<n;i++) {
+     int ch=tolower((unsigned char)optarg[i]);
+     if(!isxdigit(ch)) goto invalid;
+     pb_expect[i]=(char)ch; }
+    pb_expect[n]='\0'; break;
+   }
    case LANDSCAPE: landscape=1; break;
    case PAPER: {
     const char *names[]={"A3","A4","A5","A6","Letter","Legal","Tabloid"};
@@ -123,7 +133,7 @@ int main(int argc,char **argv) {
  if(!mode || !count || !pb_outfile[0] || (pages && count!=1)) goto invalid;
  for(int i=0;i<count;i++) if(strlen(inputs[i])>=MAXPATH-32) goto invalid;
  if(mode=='e') {
-  if(count!=1 || pages || pb_force) goto invalid;
+  if(count!=1 || pages || pb_force || pb_expect[0]) goto invalid;
   if(landscape) {double t=pb_paperwidth;pb_paperwidth=pb_paperheight;pb_paperheight=t;}
   if(pb_paperwidth<=pb_margins[0]+pb_margins[1] || pb_paperheight<=pb_margins[2]+pb_margins[3]) goto invalid;
   if(!pb_resx) pb_resx=pb_resy=pb_dpi*3;

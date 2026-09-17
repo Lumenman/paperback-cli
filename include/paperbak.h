@@ -142,6 +142,7 @@ ushort Crc16(uchar *data,int length);
 #define SHA256_HEXLEN  64              // Digest length as lowercase hex
 
 void   Sha256hex(const uchar *data,uint32_t length,char *hex);
+extern char pb_expect[SHA256_HEXLEN+1];  // --expect digest, empty if unset
 int    Textwidth(const char *s,int scale);
 void   Drawtext(uchar *bits,int stride,int height,int x,int ytop,
          const char *s,int scale,int color);

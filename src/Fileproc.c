@@ -362,7 +362,21 @@ int Saverestoredfile(int slot,int force) {
     if(stat(path,&st)==0) {times.actime=st.st_atime;times.modtime=convertToPosixTime(pf->modified);utime(path,&times);}
 #endif
   }
-  printf("Saved %s%s\n",path,partial?" (DAMAGED)":"");
+  // With --expect the restored bytes are checked against a digest the user
+  // wrote down at encode time; the file is still written, so the mismatch is
+  // reported rather than hidden.
+  int mismatch=0;
+  if(pb_expect[0]) {
+    char got[SHA256_HEXLEN+1];
+    Sha256hex(data,length,got);
+    mismatch=strcmp(got,pb_expect)!=0;
+    if(mismatch)
+      fprintf(stderr,"SHA-256 of the restored file is %s, --expect said %s\n",got,pb_expect);
+    else
+      printf("SHA-256 %s matches --expect\n",got);
+  }
+  printf("Saved %s%s\n",path,mismatch?" (HASH MISMATCH)":partial?" (DAMAGED)":"");
+  if(mismatch) {Reporterror("Restored file does not match --expect");return -1;}
   return partial?2:0;
 failed:
   return -1;

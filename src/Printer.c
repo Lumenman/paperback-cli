@@ -577,14 +577,22 @@ static void Initializeprinting(t_printdata *print) {
   print->step++;
 };
 
-// Service function, draws one line of header text centred in a band of the
-// given height, shrinking the glyphs until the line fits the printable width.
-static void Drawheadline(uchar *sheet,int stride,int sheetheight,int x0,int avail,
-  int ytop,int band,const char *s
-) {
+// Service function, picks one glyph size for both header lines: the largest
+// that fits the band height and leaves the longer of the two lines inside the
+// printable width. Sizing the lines separately would make the short one bigger.
+static int Headlinescale(int band,int avail,const char *top,const char *bottom) {
   int scale=band*3/4/7;
   if (scale<1) scale=1;
-  while (scale>1 && Textwidth(s,scale)>avail) scale--;
+  while (scale>1 && (Textwidth(top,scale)>avail || Textwidth(bottom,scale)>avail))
+    scale--;
+  return scale;
+};
+
+// Service function, draws one line of header text centred in a band of the
+// given height.
+static void Drawheadline(uchar *sheet,int stride,int sheetheight,int x0,int avail,
+  int ytop,int band,const char *s,int scale
+) {
   Drawtext(sheet,stride,sheetheight,
     x0+max((avail-Textwidth(s,scale))/2,0),
     ytop+max((band-7*scale)/2,0),s,scale,0);
@@ -594,7 +602,7 @@ static void Drawheadline(uchar *sheet,int stride,int sheetheight,int x0,int avai
 static void Printnextpage(t_printdata *print) {
   int dx,dy,px,py,nx,ny,width,height,border,redundancy,black;
   int i,j,k,l,n,success,basex,nstring,npages,rot;
-  char s[TEXTLEN],ts[TEXTLEN/2];
+  char s[TEXTLEN],foot[TEXTLEN],ts[TEXTLEN/2];
   char drv[MAXDRIVE],dir[MAXDIR],nam[MAXFILE],ext[MAXEXT],path[MAXPATH+32];
   uchar *bits;
   uint32_t u,size,pagesize,offset;
@@ -818,15 +826,16 @@ static void Printnextpage(t_printdata *print) {
         strcpy(ts,"date unknown");
       snprintf(s,sizeof(s),"%.64s   %s   %u bytes   page %i of %i",
         print->superdata.name,ts,print->origsize,print->frompage+1,npages);
-      Drawheadline(sheet,stride,print->sheetheight,print->borderleft,avail,
-        print->bordertop,print->extratop,s);
-      snprintf(s,sizeof(s),"sha256 %s   scan at %i dpi or more",
+      snprintf(foot,sizeof(foot),"sha256 %s   scan at %i dpi or more",
         print->sha256,max(print->ppix*3/dx,print->ppiy*3/dy));
+      k=Headlinescale(print->extratop,avail,s,foot);
+      Drawheadline(sheet,stride,print->sheetheight,print->borderleft,avail,
+        print->bordertop,print->extratop,s,k);
       // The footer sits just above the bottom margin rather than under the
       // grid, so it lands in the same place on every sheet of a set.
       Drawheadline(sheet,stride,print->sheetheight,print->borderleft,avail,
         print->sheetheight-print->borderbottom-print->extrabottom,
-        print->extrabottom,s);
+        print->extrabottom,foot,k);
     };
     n=sizeof(BITMAPINFOHEADER)+256*sizeof(RGBQUAD);
     memset(&bmfh,0,sizeof(bmfh));

@@ -95,6 +95,16 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     run('--decode','--force','-i',broken,'-o',output,code=1)
     malformed=bytearray(b);struct.pack_into('<I',malformed,10,0xffffffff);broken.write_bytes(malformed)
     run('--decode','--force','-i',broken,'-o',output,code=1)
+    digest=hashlib.sha256(original).hexdigest()
+    run('--encode','-i',source,'-o',page,'--dpi',100)
+    got=run('--decode','-i',page,'-o',output,'--expect',digest.upper())
+    assert 'matches --expect' in got.stdout and output.read_bytes()==original
+    bad=run('--decode','-i',page,'-o',output,'--expect','f'*64,code=1)
+    assert 'HASH MISMATCH' in bad.stdout and digest in bad.stderr
+    assert output.read_bytes()==original  # the file is still written
+    for opts in [('--expect','abc'),('--expect','g'+'f'*63),('--expect',digest+'0')]:
+        run('--decode','-i',page,'-o',output,*opts,code=1)
+    run('--encode','-i',source,'-o',page,'--expect',digest,code=1)
     # Full sheets, presets, orientation and custom dimensions.
     for opts,size in [(['--paper','Letter'],(2550,3300)),(['--paper','a3'],(3508,4961)),(['--paper','A6'],(1240,1748)),(['--paper','Legal'],(2550,4200)),(['--paper','Tabloid'],(3300,5100)),(['--paper-size','8.5x11in'],(2550,3300)),(['--paper','A5','--landscape'],(2480,1748)),(['--paper-size','160x200mm'],(1890,2362))]:
         run('--encode','-i',source,'-o',page,'--dpi',100,*opts)
