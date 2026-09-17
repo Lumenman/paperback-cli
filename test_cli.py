@@ -1,6 +1,6 @@
 """End-to-end checks: python test_cli.py [path/to/paperback-cli]. Stdlib only."""
 from pathlib import Path
-import os, random, struct, subprocess, sys, tempfile
+import hashlib, os, random, struct, subprocess, sys, tempfile
 
 EXE = str(Path(sys.argv[1] if len(sys.argv)>1 else ('paperback-cli.exe' if os.name=='nt' else './paperback-cli')).resolve())
 
@@ -101,6 +101,19 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
         assert bmp(page)[1:3]==size
         run('--decode','-i',page,'-o',output);assert output.read_bytes()==original
     run('--encode','-i',source,'-o',page,'--dpi',100,'--border','--margin-left','15mm')
+    run('--decode','-i',page,'-o',output);assert output.read_bytes()==original
+    # Header and footer: text lands in the two reserved bands, the margins stay
+    # clear, the data still decodes and the printed digest matches the input.
+    head=run('--encode','-i',source,'-o',page,'--dpi',100,'--header')
+    assert hashlib.sha256(original).hexdigest() in head.stdout
+    b,w,h,off,stride=bmp(page)
+    assert (w,h)==(2480,3508)
+    def inked(y0,y1): return any(b[off+(h-1-y)*stride+x]<128 for y in range(y0,y1) for x in range(w))
+    # Text starts inside the reserved top band and the grid only below it, so a
+    # white gap separates the two; a page without a header has grid dots there.
+    assert inked(118,168) and not inked(168,190)
+    assert inked(h-168,h-118)                    # footer band
+    assert not inked(0,118) and not inked(h-118,h)
     run('--decode','-i',page,'-o',output);assert output.read_bytes()==original
     for opts in [('--dpi','abc'),('--dpi','200x'),('--pages','-1'),('--paper','Unknown'),('--margin','nan'),('--paper-size','1x1mm'),('--margin','500mm'),('--image-dpi','100')]:
         run('--encode','-i',source,'-o',page,*opts,code=1)

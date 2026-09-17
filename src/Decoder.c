@@ -159,6 +159,7 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
   int i,j,k,q,r,factor,lcorr,c,cmin,cmax,limit;
   int grid1[NDOT][NDOT],answer,bestanswer;
   int m,n,e,best,margin[sizeof(t_data)],eras[ECC_SIZE];
+  uint32_t bitrow[NDOT];
   t_data raw;
   static int lastgood;
   ushort crc;
@@ -204,7 +205,9 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
       // Extract data according to the selected orientation. Distance of the
       // dot from the threshold is the confidence; the weakest dot decides the
       // confidence of the byte it belongs to.
-      memset(result,0,sizeof(t_data));
+      // t_data is packed, so the dot rows are built in an aligned local array
+      // and copied over the result rather than written through a uint32_t *.
+      memset(bitrow,0,sizeof(bitrow));
       for (n=0; n<(int)sizeof(t_data); n++) margin[n]=MAXMARGIN;
       for (j=0; j<NDOT; j++) {
         for (i=0; i<NDOT; i++) {
@@ -219,7 +222,7 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
             case 7: c=grid1[NDOT-1-j][i]; break;
           };
           if (c<limit) {
-            ((uint32_t *)result)[j]|=1u<<i;
+            bitrow[j]|=1u<<i;
           };
           m=c-limit; if (m<0) m=-m;
           n=j*sizeof(uint32_t)+i/8;    // Byte of the block holding this dot
@@ -228,7 +231,8 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
       };
       // XOR with grid that corrects mean brightness.
       for (j=0; j<NDOT; j++) {
-        ((uint32_t *)result)[j]^=(j & 1?0xAAAAAAAA:0x55555555); };
+        bitrow[j]^=(j & 1?0xAAAAAAAA:0x55555555); };
+      memcpy(result,bitrow,sizeof(bitrow));
       // Apply ECC to restore invalid data.
       if (pdata->mode & M_BEST)
         memcpy(&uncorrected,result,sizeof(t_data));

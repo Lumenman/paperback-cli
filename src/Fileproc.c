@@ -304,6 +304,9 @@ int Saverestoredfile(int slot,int force) {
   uint32_t length=pf->origsize;
   const char *path=pb_outfile;
   char mapname[MAXPATH+8];
+  // This clears pf->data in place, including the parity written into gaps by
+  // Addblock, so it is only safe because the CLI saves once after every scan.
+  // Turning pb_autosave on would destroy parity later pages still need.
   for(int i=0;i<pf->nblock;i++)
     if(pf->datavalid[i]!=1) memset(data+(size_t)i*NDATA,0,NDATA);
   // Restored backups routinely hold secrets, and the page carries only one

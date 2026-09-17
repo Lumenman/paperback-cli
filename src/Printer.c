@@ -61,7 +61,7 @@ static void Drawblock(int index,t_data *block,uchar *bits,int width,int height,
   // Print block. To increase the reliability of empty or half-empty blocks
   // and close-to-0 addresses, I XOR all data with 55 or AA.
   for (j=0; j<32; j++) {
-    t=((uint32_t *)block)[j];
+    memcpy(&t,(const uchar *)block+j*sizeof(t),sizeof(t)); // block is packed
     if ((j & 1)==0)
       t^=0x55555555;
     else
@@ -266,6 +266,10 @@ static void Finishreading(t_printdata *print) {
   print->datasize=print->bufsize;  // padded size: this is what goes on paper
   print->alignedsize=print->bufsize;
   print->bufcrc=Crc16(print->buf,print->alignedsize);
+  // The digest covers the original bytes, not the padding, so it matches what
+  // sha256sum reports for the input file.
+  Sha256hex(print->buf,print->origsize,print->sha256);
+  printf("SHA-256 %s\n",print->sha256);
   print->step++;
 }
 
@@ -443,6 +447,12 @@ static void Initializeprinting(t_printdata *print) {
   print->bordertop=(int)(pb_margins[2]*print->ppiy/25.4+0.5);
   print->borderbottom=(int)(pb_margins[3]*print->ppiy/25.4+0.5); 
   //}
+  // Reserve one text band above and one below the grid. The bands cost grid
+  // rows, so they exist only when the header was asked for.
+  if (print->printheader)
+    print->extratop=print->extrabottom=max(print->ppiy/6,9);
+  else
+    print->extratop=print->extrabottom=0;
   // Calculate size of printable area, in the pixels of printer's resolution.
   width-=
     print->borderleft+print->borderright;
@@ -565,6 +575,19 @@ static void Initializeprinting(t_printdata *print) {
   //};
   // Step finished.
   print->step++;
+};
+
+// Service function, draws one line of header text centred in a band of the
+// given height, shrinking the glyphs until the line fits the printable width.
+static void Drawheadline(uchar *sheet,int stride,int sheetheight,int x0,int avail,
+  int ytop,int band,const char *s
+) {
+  int scale=band*3/4/7;
+  if (scale<1) scale=1;
+  while (scale>1 && Textwidth(s,scale)>avail) scale--;
+  Drawtext(sheet,stride,sheetheight,
+    x0+max((avail-Textwidth(s,scale))/2,0),
+    ytop+max((band-7*scale)/2,0),s,scale,0);
 };
 
 // Prints one complete page or saves one bitmap.
@@ -783,9 +806,28 @@ static void Printnextpage(t_printdata *print) {
     uchar *sheet=malloc(bytes);
     if(!sheet) {fclose(hbmpfile);Reporterror("Low memory");Stopprinting(print);return;}
     memset(sheet,255,bytes);
-    int bottom=print->sheetheight-print->bordertop-height;
+    int gridtop=print->bordertop+print->extratop;
+    int bottom=print->sheetheight-gridtop-height;
     for(int row=0;row<height;row++)
       memcpy(sheet+(size_t)(bottom+row)*stride+print->borderleft,bits+(size_t)row*width,width);
+    if (print->printheader) {
+      int avail=print->sheetwidth-print->borderleft-print->borderright;
+      time_t mt=convertToPosixTime(print->modified);
+      struct tm *gm=gmtime(&mt);
+      if (gm==NULL || strftime(ts,sizeof(ts),"%Y-%m-%d %H:%M UTC",gm)==0)
+        strcpy(ts,"date unknown");
+      snprintf(s,sizeof(s),"%.64s   %s   %u bytes   page %i of %i",
+        print->superdata.name,ts,print->origsize,print->frompage+1,npages);
+      Drawheadline(sheet,stride,print->sheetheight,print->borderleft,avail,
+        print->bordertop,print->extratop,s);
+      snprintf(s,sizeof(s),"sha256 %s   scan at %i dpi or more",
+        print->sha256,max(print->ppix*3/dx,print->ppiy*3/dy));
+      // The footer sits just above the bottom margin rather than under the
+      // grid, so it lands in the same place on every sheet of a set.
+      Drawheadline(sheet,stride,print->sheetheight,print->borderleft,avail,
+        print->sheetheight-print->borderbottom-print->extrabottom,
+        print->extrabottom,s);
+    };
     n=sizeof(BITMAPINFOHEADER)+256*sizeof(RGBQUAD);
     memset(&bmfh,0,sizeof(bmfh));
     bmfh.bfType=CHAR_BM; bmfh.bfSize=sizeof(bmfh)+n+bytes;

@@ -51,18 +51,18 @@ static void help(void) {
  "  --margin SIZE         All margins, default 10mm; mm or in\n"
  "  --margin-left SIZE    Also --margin-right, --margin-top, --margin-bottom\n"
  "  --image-dpi N         Bitmap resolution, 80..2400; default 3 times --dpi\n"
- "  -d, --dpi N           Code dot density, 40..600; default 200\n"
+ "  -d, --dpi N           Code dot density, 40..600; default 150\n"
  "  -s, --dotsize N       Dot width percent, 50..100; default 70\n"
  "  -r, --redundancy N    One recovery block per N data blocks, 2..10; default 5\n"
  "  -b, --border          Black outer border\n"
- "  -n, --no-header       Compatibility option; text headers are not generated\n"
+ "  --header              Print a text header and footer; costs grid rows\n"
  "  -h, --help            Help\n"
  "  -v, --version         Version\n"
  "Output uses the exact -o path; OUTPUT.map records gaps and integrity.\n"
  "Exit: 0 complete, 1 error, 2 damaged output saved. Print at actual size (100%).");
 }
 int main(int argc,char **argv) {
- enum { PAPER=256,SIZE,LANDSCAPE,MARGIN,LEFT,RIGHT,TOP,BOTTOM,IMAGE_DPI };
+ enum { PAPER=256,SIZE,LANDSCAPE,MARGIN,LEFT,RIGHT,TOP,BOTTOM,IMAGE_DPI,HEADER };
  struct option options[]={
  {"encode",0,0,'e'},{"decode",0,0,'D'},{"input",1,0,'i'},{"output",1,0,'o'},
  {"pages",1,0,'p'},{"force",0,0,'f'},{"dpi",1,0,'d'},{"dotsize",1,0,'s'},
@@ -70,11 +70,12 @@ int main(int argc,char **argv) {
  {"help",0,0,'h'},{"version",0,0,'v'},{"paper",1,0,PAPER},
  {"paper-size",1,0,SIZE},{"landscape",0,0,LANDSCAPE},{"margin",1,0,MARGIN},
  {"margin-left",1,0,LEFT},{"margin-right",1,0,RIGHT},{"margin-top",1,0,TOP},
- {"margin-bottom",1,0,BOTTOM},{"image-dpi",1,0,IMAGE_DPI},{0,0,0,0}};
+ {"margin-bottom",1,0,BOTTOM},{"image-dpi",1,0,IMAGE_DPI},
+ {"header",0,0,HEADER},{0,0,0,0}};
  const char **inputs=calloc(argc,sizeof(*inputs));
  int count=0,mode=0,pages=0,landscape=0,c,status=0;
  if(!inputs) return 1;
- pb_dpi=200; pb_dotpercent=70; pb_redundancy=5; pb_autosave=0;
+ pb_dpi=150; pb_dotpercent=70; pb_redundancy=5; pb_autosave=0;
  while((c=getopt_long(argc,argv,"i:o:p:fd:s:r:nbvh",options,NULL))!=-1) {
   switch(c) {
    case 'e': case 'D': if(mode && mode!=c) goto invalid; mode=c; break;
@@ -91,6 +92,7 @@ int main(int argc,char **argv) {
    case 'h': help(); free(inputs); return 0;
    case 'v': puts("PaperBack CLI 1.3 (GPL); PaperBack by Oleh Yuschuk"); free(inputs); return 0;
    case IMAGE_DPI: pb_resx=pb_resy=number(optarg,80,2400); if(pb_resx<0) goto invalid; break;
+   case HEADER: pb_printheader=1; break;
    case LANDSCAPE: landscape=1; break;
    case PAPER: {
     const char *names[]={"A3","A4","A5","A6","Letter","Legal","Tabloid"};

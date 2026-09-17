@@ -137,6 +137,17 @@ ushort Crc16(uchar *data,int length);
 
 
 ////////////////////////////////////////////////////////////////////////////////
+///////////////////////////// SHA-256 AND TEXT /////////////////////////////////
+
+#define SHA256_HEXLEN  64              // Digest length as lowercase hex
+
+void   Sha256hex(const uchar *data,uint32_t length,char *hex);
+int    Textwidth(const char *s,int scale);
+void   Drawtext(uchar *bits,int stride,int height,int x,int ytop,
+         const char *s,int scale,int color);
+
+
+////////////////////////////////////////////////////////////////////////////////
 ////////////////////////// REED-SOLOMON ECC ROUTINES ///////////////////////////
 
 void   Encode8(uchar *data,uchar *parity,int pad);
@@ -166,6 +177,7 @@ typedef struct t_printdata {           // Print control structure
   uchar          *buf;                 // Buffer for file data
   uint32_t       bufsize;              // Size of buf, bytes
   int            bufcrc;               // 16-bit CRC of (packed) data in buf
+  char           sha256[SHA256_HEXLEN+1]; // Hex digest of the original file
   t_superdata    superdata;            // Identification block on paper
   //HDC            dc;                   // Printer device context
   int            frompage;             // First page to print (0-based)

@@ -12,7 +12,7 @@ CC=gcc
 CFLAGS=-O2 -std=gnu11
 CPPFLAGS=-Iinclude -I$(PDIR)/include
 LDLIBS=-lm
-SOURCES=$(SDIR)/main.c $(SDIR)/paperbak.c $(SDIR)/Printer.c $(SDIR)/Scanner.c $(SDIR)/Fileproc.c $(SDIR)/Decoder.c $(SDIR)/Crc16.c $(SDIR)/Ecc.c $(PDIR)/src/FileAttributes.c $(PDIR)/src/Borland.c
+SOURCES=$(SDIR)/main.c $(SDIR)/paperbak.c $(SDIR)/Printer.c $(SDIR)/Scanner.c $(SDIR)/Fileproc.c $(SDIR)/Decoder.c $(SDIR)/Crc16.c $(SDIR)/Sha256.c $(SDIR)/Text.c $(SDIR)/Ecc.c $(PDIR)/src/FileAttributes.c $(PDIR)/src/Borland.c
 HEADERS=$(wildcard include/*.h) $(wildcard $(PDIR)/include/*.h)
 
 .PHONY: all main test clean
