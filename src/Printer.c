@@ -761,7 +761,16 @@ static void Printnextpage(t_printdata *print) {
     // Create bitmap file.
     //hbmpfile=CreateFile(path,GENERIC_WRITE,0,NULL,
     //  CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
+    // The sheet carries the same bytes as the input file, so it gets the same
+    // 0600 the decoder gives a restored file.
+#ifdef __linux__
+    mode_t oldmask=umask(0077);
+#endif
     hbmpfile = fopen (path, "wb");
+#ifdef __linux__
+    umask(oldmask);
+    if (hbmpfile!=NULL) chmod(path,0600); // an existing page keeps its old mode otherwise
+#endif
     //if (hbmpfile==INVALID_HANDLE_VALUE) //
     if (hbmpfile == NULL) {
       Reporterror("Unable to create bitmap file");
