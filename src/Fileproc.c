@@ -306,11 +306,23 @@ int Saverestoredfile(int slot,int force) {
   char mapname[MAXPATH+8];
   for(int i=0;i<pf->nblock;i++)
     if(pf->datavalid[i]!=1) memset(data+(size_t)i*NDATA,0,NDATA);
+  // Restored backups routinely hold secrets, and the page carries only one
+  // attribute bit, so never widen access: create the file as 0600. The umask
+  // covers --force output too, which skips the attribute block below.
+#ifdef __linux__
+  mode_t oldmask=umask(0077);
+#endif
   FILE *out=fopen(path,"wb");
+#ifdef __linux__
+  umask(oldmask);
+#endif
   if(!out) {Reporterror("Unable to create output");goto failed;}
   int ok=fwrite(data,1,length,out)==length;
   if(fclose(out)!=0) ok=0;
   if(!ok) {Reporterror("Output write error");goto failed;}
+#ifdef __linux__
+  chmod(path,0600);                    // an existing output keeps its old mode otherwise
+#endif
   {
     // Rewrite the map on every save, so a later complete restore cannot leave stale gaps.
     snprintf(mapname,sizeof(mapname),"%s.map",path);
@@ -338,7 +350,6 @@ int Saverestoredfile(int slot,int force) {
 #elif defined(__linux__)
     struct stat st; struct utimbuf times;
     if(stat(path,&st)==0) {times.actime=st.st_atime;times.modtime=convertToPosixTime(pf->modified);utime(path,&times);}
-    chmod(path,convertToPosixAttributes(pf->attributes));
 #endif
   }
   printf("Saved %s%s\n",path,partial?" (DAMAGED)":"");

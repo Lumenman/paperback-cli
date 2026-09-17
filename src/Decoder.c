@@ -219,7 +219,7 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
             case 7: c=grid1[NDOT-1-j][i]; break;
           };
           if (c<limit) {
-            ((uint32_t *)result)[j]|=1<<i;
+            ((uint32_t *)result)[j]|=1u<<i;
           };
           m=c-limit; if (m<0) m=-m;
           n=j*sizeof(uint32_t)+i/8;    // Byte of the block holding this dot

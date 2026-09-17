@@ -676,7 +676,7 @@ static void Printnextpage(t_printdata *print) {
   // Now the most important part - encode and draw data, group by group!
   for (i=0; i<nstring; i++) {
     // Prepare redundancy block.
-    cksum.addr=offset ^ (redundancy<<28);
+    cksum.addr=offset ^ ((uint32_t)redundancy<<28);
     memset(cksum.data,0xFF,NDATA);
     // Process data group.
     for (j=0; j<redundancy; j++) {
