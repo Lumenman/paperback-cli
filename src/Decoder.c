@@ -345,11 +345,41 @@ static void Getgridposition(t_procdata *pdata) {
   pdata->step++;
 };
 
+// Ink and paper levels over one area of the bitmap: the level not reached by 3%
+// of its pixels and the level exceeded by 3% of them, plus the mean. Rows are
+// taken every `step`, so a whole sheet costs no more to measure than a window
+// of it.
+static void Getlevels(t_procdata *pdata,int x0,int x1,int y0,int y1,int step,
+  int *cmin,int *cmax,int *cmean) {
+  int i,j,n,sum,limit,distr[256];
+  uchar *pd;
+  memset(distr,0,sizeof(distr));
+  for (j=y0,n=0,sum=0; j<y1; j+=step) {
+    pd=pdata->data+j*pdata->sizex+x0;
+    for (i=x0; i<x1; i++,pd++) {
+      distr[*pd]++; sum+=*pd; n++;
+    };
+  };
+  if (n<=0) {
+    *cmin=*cmax=*cmean=0;
+    return; };
+  *cmean=sum/n;
+  limit=n/33;                          // 3% of the total number of pixels
+  for (i=0,sum=0; i<255; i++) {
+    sum+=distr[i];
+    if (sum>=limit) break; };
+  *cmin=i;
+  for (i=255,sum=0; i>0; i--) {
+    sum+=distr[i];
+    if (sum>=limit) break; };
+  *cmax=i;
+};
+
 // Selects search range, determines grid intensity and estimates sharpness.
 static void Getgridintensity(t_procdata *pdata) {
-  int i,j,sizex,sizey,centerx,centery,dx,dy,n;
+  int i,j,sizex,sizey,centerx,centery,dx,dy,nd,x0,x1,y0,y1,step;
   int searchx0,searchy0,searchx1,searchy1;
-  int distrc[256],distrd[256],cmean,cmin,cmax,limit,sum,contrast;
+  int distrd[256],cmean,cmin,cmax,rmin,rmax,rmean,limit,sum,contrast;
   uchar *data,*pd;
   // Get frequently used variables.
   sizex=pdata->sizex;
@@ -366,36 +396,48 @@ static void Getgridintensity(t_procdata *pdata) {
   searchy1=searchy0+NHYST; if (searchy1>sizey) searchy1=sizey;
   dx=searchx1-searchx0;
   dy=searchy1-searchy0;
-  // Determine mean, minimal and maximal intensity of the central area, and
-  // sharpness of the image. As a minimum I take the level not reached by 3%
-  // of all pixels, as a maximum - level exceeded by 3% of pixels.
-  memset(distrc,0,sizeof(distrc));
+  // Sharpness: the 5% level of the difference between adjacent pixels, over the
+  // window. It stays on the window because the correction applied to it further
+  // down was tuned against exactly this sample of the page (NOTES.md 11.5).
   memset(distrd,0,sizeof(distrd));
-  cmean=0; n=0;
-  for (j=0; j<dy-1; j++) {
+  for (j=0,nd=0; j<dy-1; j++) {
     pd=data+(searchy0+j)*sizex+searchx0;
-    for (i=0; i<dx-1; i++,pd++) {
-      distrc[*pd]++; cmean+=*pd; n++;
+    for (i=0; i<dx-1; i++,pd++,nd++) {
       distrd[abs(pd[1]-pd[0])]++;
       distrd[abs(pd[sizex]-pd[0])]++;
     };
   };
-  // Calculate mean, minimal and maximal image intensity.
-  cmean/=n;
-  limit=n/33;                          // 3% of the total number of pixels
-  for (cmin=0,sum=0; cmin<255; cmin++) {
-    sum+=distrc[cmin];
-    if (sum>=limit) break; };
-  for (cmax=255,sum=0; cmax>0; cmax--) {
-    sum+=distrc[cmax];
-    if (sum>=limit) break; };
+  // Levels of ink and paper, from the window as 1.20 took them. As a minimum I
+  // take the level not reached by 3% of all pixels, as a maximum - the level
+  // exceeded by 3% of them.
+  Getlevels(pdata,searchx0,searchx1,searchy0,searchy1,1,&cmin,&cmax,&cmean);
+  // But a sheet can carry a sticker, a coffee ring or a white crease exactly
+  // where that window falls. 1.20 then measures cmin==cmax inside it and throws
+  // the whole page away with "No image" although the other 95% of it is clean.
+  // When the window holds far less contrast than the sheet does, it is not a
+  // sample of the sheet, and the sheet is measured instead. Compared against
+  // the sheet rather than against a constant, so a healthy page - where the two
+  // agree - keeps the levels 1.20 gave it, and with them the sharpness
+  // correction that was fitted to them.
+  //
+  // ponytail: switched, not blended. The fold-shadow page of NOTES.md 11 gains
+  // 30 blocks from the wider levels although its own window is good, and
+  // taking them always costs blocks on a blurred scan; a blend would need the
+  // sharpness correction refitted, which is a bigger job than this one.
+  x0=pdata->gridxmin; x1=pdata->gridxmax;
+  y0=pdata->gridymin; y1=pdata->gridymax;
+  step=(y1-y0)/NHYST+1;
+  if (x1-x0>=dx && y1-y0>=dy) {
+    Getlevels(pdata,x0,x1,y0,y1,step,&rmin,&rmax,&rmean);
+    if (rmax-rmin>2*(cmax-cmin)) {
+      cmin=rmin; cmax=rmax; cmean=rmean; }; };
   if (cmax-cmin<1) {
     Reporterror("No image");
     pdata->step=0;
     return; };
   // Estimate image sharpness. The factor is rather empirical. Later, when
   // dot size is known, this value will be corrected.
-  limit=n/10;                          // 5% (each point is counted twice)
+  limit=nd/10;                         // 5% (each point is counted twice)
   for (contrast=255,sum=0; contrast>1; contrast--) {
     sum+=distrd[contrast];
     if (sum>=limit) break; };
@@ -423,9 +465,19 @@ static void Getxangle(t_procdata *pdata) {
   sizex=pdata->sizex;
   data=pdata->data;
   x0=pdata->searchx0;
-  y0=pdata->searchy0;
   dx=pdata->searchx1-x0;
-  dy=pdata->searchy1-y0;
+  // The profile is 1024 columns wide because h[] is, but nothing says the rows
+  // feeding it must come from the same 1024-pixel square. They are taken from
+  // the whole height of the raster, sheared by the angle under test: index
+  // arithmetic, no pixel resampled, and the same 256 sampled lines as before,
+  // only spread down the sheet instead of a patch in the middle of it. A wrong
+  // angle then smears the comb over the whole page rather than over a thousand
+  // rows, and a patch of blank paper - a sticker, a crease - dilutes the comb
+  // instead of being all there is of it. The same profile the paper-sound
+  // project sums along its own lean; experiments/NOTES.md 11.
+  y0=pdata->gridymin;
+  dy=pdata->gridymax-y0;
+  if (dy<NHYST) { y0=pdata->searchy0; dy=pdata->searchy1-y0; };
   // Calculate vertical step. 256 lines are sufficient. Warning: danger of
   // moire, especially on synthetic bitmaps!
   ystep=dy/256; if (ystep<1) ystep=1;
@@ -487,10 +539,11 @@ static void Getyangle(t_procdata *pdata) {
   sizex=pdata->sizex;
   sizey=pdata->sizey;
   data=pdata->data;
-  x0=pdata->searchx0;
   y0=pdata->searchy0;
-  dx=pdata->searchx1-x0;
   dy=pdata->searchy1-y0;
+  x0=pdata->gridxmin;                  // Whole width of the raster, as above
+  dx=pdata->gridxmax-x0;
+  if (dx<NHYST) { x0=pdata->searchx0; dx=pdata->searchx1-x0; };
   // Calculate vertical step. 256 lines are sufficient. Warning: danger of
   // moire, especially on synthetic bitmaps!
   xstep=dx/256; if (xstep<1) xstep=1;
