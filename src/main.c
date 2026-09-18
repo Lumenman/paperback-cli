@@ -65,6 +65,8 @@ static void help(void) {
  "Without -o the file is restored in the current directory under the name the\n"
  "page carries, and an existing file of that name is never overwritten. With -o\n"
  "the path is used exactly. OUTPUT.map records gaps and integrity.\n"
+ "A stack holding several files restores them all, each under its own name;\n"
+ "-o and --expect then have nothing to name and are refused.\n"
  "Exit: 0 complete, 1 error, 2 damaged output saved. Print at actual size (100%).");
 }
 int main(int argc,char **argv) {
@@ -161,11 +163,24 @@ int main(int argc,char **argv) {
    if(pb_errors!=errors && !pb_force) {status=1;break;}
   }
   Freeprocdata(&pb_procdata);
-  int found=0,slot=-1;
-  for(int i=0;i<NFILE;i++) if(pb_fproc[i].busy) {found++;slot=i;}
-  if(found!=1) {Reporterror(found?"Scans contain different files; refusing to mix outputs":"No readable file header found");status=1;}
-  else if(!status) {
+  int found=0;
+  for(int i=0;i<NFILE;i++) if(pb_fproc[i].busy) found++;
+  // A stack of sheets can hold several files, and each of them knows its own
+  // name, so they no longer have to be separated by hand and fed in one at a
+  // time. -o is what cannot be shared: it names one path.
+  if(!found) {Reporterror("No readable file header found");status=1;}
+  else if(found>1 && pb_outfile[0]) {
+   Reporterror("Scans hold several files; -o names one path, drop it to restore each under its own name");status=1;
+  }
+  else if(found>1 && pb_expect[0]) {
+   Reporterror("Scans hold several files; --expect names one digest");status=1;
+  }
+  else if(!status) for(int slot=0;slot<NFILE;slot++) {
    t_fproc *pf=&pb_fproc[slot];
+   if(!pf->busy) continue;
+   // With one file its label was printed when the page was read and nothing has
+   // come between; with several, say again which one this is about.
+   if(found>1) Reportpagelabel(pf->name);
    printf("Recovered %d/%d blocks; %d missing; %d repaired using redundancy\n",pf->ndata,pf->nblock,pf->nblock-pf->ndata,pf->recoveredblocks);
    if(pf->ndata!=pf->nblock && pf->pagesize) {
     fputs("Pages to rescan:",stdout);
@@ -175,9 +190,15 @@ int main(int argc,char **argv) {
     }
     putchar('\n');
    }
+   // One file's failure does not cancel the others: every file that can be
+   // written is written, and the worst outcome decides the exit status.
    if(pf->ndata!=pf->nblock && !pb_force) {
     Reporterror("Incomplete file: scan again or use --force to accept damaged pages");status=1;
-   } else {int saved=Saverestoredfile(slot,pb_force);status=saved<0?1:saved;}
+   } else {
+    int saved=Saverestoredfile(slot,pb_force);
+    if(saved<0) status=1;
+    else if(saved && status!=1) status=saved;
+   }
   }
   for(int i=0;i<NFILE;i++) Closefproc(i);
  }

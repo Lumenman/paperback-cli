@@ -215,5 +215,23 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     # -o still wins and still overwrites the path the caller named.
     run('--decode','-i',rule,'-o',output);assert output.read_bytes()==original
     run('--decode','-i',rule,'-o',output);assert output.read_bytes()==original
+    # A stack of sheets can hold several files. Each carries its own name, so
+    # they no longer have to be sorted by hand and fed in one run at a time.
+    # -o is the thing that cannot be shared, since it names one path, and so is
+    # --expect, since it names one digest.
+    second=root/'second.bin';second.write_bytes(bytes(range(200))*3)
+    sheet2=root/'second.bmp'
+    run('--encode','-i',second,'-o',sheet2,'--dpi',100)
+    both=root/'both';both.mkdir()
+    got=run('--decode',rule,sheet2,cwd=both)
+    assert (both/'label.dat').read_bytes()==original
+    assert (both/'second.bin').read_bytes()==second.read_bytes()
+    # Said once when the page is read and once over the file's own summary, so a
+    # stack of several cannot leave you guessing which count belongs to which.
+    assert got.stdout.count('Page label: label.dat')==2,got.stdout
+    denied=run('--decode','-o',output,rule,sheet2,code=1)
+    assert 'names one path' in denied.stderr,denied.stderr
+    denied=run('--decode','--expect',digest,rule,sheet2,code=1)
+    assert 'one digest' in denied.stderr,denied.stderr
 print('All CLI checks passed')
 

@@ -66,7 +66,7 @@ void Closefproc(int slot) {
 // bytes come off a scanned sheet, where a control character is as easy to
 // print as a letter and an escape sequence would be obeyed by the terminal.
 // Only C0 and DEL are replaced, so a name in UTF-8 still reads as itself.
-static void Reportpagelabel(const char *name) {
+void Reportpagelabel(const char *name) {
   int i;
   uchar c,s[65];
   for (i=0; i<64 && name[i]!='\0'; i++) {

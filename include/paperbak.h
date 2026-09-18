@@ -321,6 +321,7 @@ void   Closefproc(int slot);
 int    Startnextpage(t_superblock *superblock);
 int    Addblock(t_block *block,int slot);
 int    Finishpage(int slot,int ngood,int nbad,uint32_t nrestored);
+void   Reportpagelabel(const char *label);
 int    Namefrompagelabel(const char *label,char *out,int size);
 int    Saverestoredfile(int slot,int force);
 
