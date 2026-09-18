@@ -54,6 +54,30 @@ void Closefproc(int slot) {
 
 
 
+// Says what the page calls the file it carries. The decoder has always read
+// this name and kept it - two scans belong to the same file only if their
+// labels match - but never told anyone what it was, so a sheet of unknown
+// provenance restored into whatever -o was called and its type was left to be
+// guessed at.
+//
+// Printed with a length and through a filter, never as a string. The format
+// lets all 64 bytes be name, so the field need not be terminated; and the
+// bytes come off a scanned sheet, where a control character is as easy to
+// print as a letter and an escape sequence would be obeyed by the terminal.
+// Only C0 and DEL are replaced, so a name in UTF-8 still reads as itself.
+static void Reportpagelabel(const char *name) {
+  int i;
+  uchar c,s[65];
+  for (i=0; i<64 && name[i]!='\0'; i++) {
+    c=(uchar)name[i];
+    s[i]=(c<0x20 || c==0x7F)?'?':c; };
+  s[i]='\0';
+  if (i==0)
+    printf("Page label: the page carries no file name\n");
+  else
+    printf("Page label: %s\n",s);
+};
+
 // Starts new decoded page. Returns non-negative index to table of processed
 // files on success or -1 on error.
 int Startnextpage(t_superblock *superblock) {
@@ -133,7 +157,8 @@ int Startnextpage(t_superblock *superblock) {
     pf->badblocks=0;
     pf->restoredbytes=0;
     pf->recoveredblocks=0;
-    pf->busy=1; };
+    pf->busy=1;
+    Reportpagelabel(pf->name); };
   // Invalidate page limits and report success.
   pf=pb_fproc+slot;
   pf->page=superblock->page;

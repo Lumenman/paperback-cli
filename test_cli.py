@@ -189,5 +189,16 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     run('--encode','-i',tiny,'-o',rule,'--dpi',100,'-s',100)
     assert '100% of the cell' in dotwidth(rule)[0]
     assert len(dotwidth(rule,'-s',100))==1
+    # The page carries the name of the file it holds, and the decoder says so.
+    # Without it a sheet of unknown provenance restores into whatever -o was
+    # called and its type is left to be guessed at. Said once per file, not
+    # once per page, and said whether or not -o was given.
+    named=root/'label.dat';named.write_bytes(original)
+    run('--encode','-i',named,'-o',rule,'--dpi',100)
+    got=run('--decode','-i',rule,'-o',output)
+    assert [l for l in got.stdout.splitlines()
+            if l=='Page label: label.dat'],got.stdout
+    got=run('--decode','-o',output,*pages)      # several sheets of one file
+    assert sum(l.startswith('Page label:') for l in got.stdout.splitlines())==1
 print('All CLI checks passed')
 
