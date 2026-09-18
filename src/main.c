@@ -58,9 +58,10 @@ static void help(void) {
  "  -d, --dpi N           Code dot density, 40..600; default 150\n"
  "  -s, --dotsize N       Dot width percent, 50..100; default 70\n"
  "  -r, --redundancy N    One recovery block per N data blocks, 2..10, or 0 for\n"
- "                        none; default 5\n"
+ "                        none; default 0\n"
  "  -b, --border          Black outer border\n"
  "  --header              Print a text header and footer; costs grid rows\n"
+ "  -n, --no-header       Drop them again if something turned them on\n"
  "  --quality-map         Print a decode map and dot width per scan\n"
  "  -h, --help            Help\n"
  "  -v, --version         Version\n"
@@ -72,7 +73,8 @@ static void help(void) {
  "Exit: 0 complete, 1 error, 2 damaged output saved. Print at actual size (100%).");
 }
 int main(int argc,char **argv) {
- enum { PAPER=256,SIZE,LANDSCAPE,MARGIN,LEFT,RIGHT,TOP,BOTTOM,IMAGE_DPI,HEADER,EXPECT,QMAP };
+ enum { PAPER=256,SIZE,LANDSCAPE,MARGIN,LEFT,RIGHT,TOP,BOTTOM,IMAGE_DPI,HEADER,
+        EXPECT,QMAP };
  struct option options[]={
  {"encode",0,0,'e'},{"decode",0,0,'D'},{"input",1,0,'i'},{"output",1,0,'o'},
  {"pages",1,0,'p'},{"force",0,0,'f'},{"dpi",1,0,'d'},{"dotsize",1,0,'s'},
@@ -86,7 +88,7 @@ int main(int argc,char **argv) {
  const char **inputs=calloc(argc,sizeof(*inputs));
  int count=0,mode=0,pages=0,landscape=0,c,status=0;
  if(!inputs) return 1;
- pb_dpi=150; pb_dotpercent=70; pb_redundancy=5; pb_autosave=0;
+ pb_dpi=150; pb_dotpercent=70; pb_redundancy=0; pb_autosave=0;
  while((c=getopt_long(argc,argv,"i:o:p:fd:s:r:nbvh",options,NULL))!=-1) {
   switch(c) {
    case 'e': case 'D': if(mode && mode!=c) goto invalid; mode=c; break;
@@ -103,7 +105,7 @@ int main(int argc,char **argv) {
     if(pb_redundancy<0 || pb_redundancy==1) goto invalid;
     break;
    case 'b': pb_printborder=1; break;
-   case 'n': break;
+   case 'n': pb_printheader=0; break;   // Was an empty break for years
    case 'h': help(); free(inputs); return 0;
    case 'v': puts("PaperBack CLI 1.4 (GPL); PaperBack by Oleh Yuschuk"); free(inputs); return 0;
    case IMAGE_DPI: pb_resx=pb_resy=number(optarg,80,2400); if(pb_resx<0) goto invalid; break;
