@@ -126,13 +126,46 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     assert hashlib.sha256(original).hexdigest() in head.stdout
     b,w,h,off,stride=bmp(page)
     assert (w,h)==(2480,3508)
-    def inked(y0,y1): return any(b[off+(h-1-y)*stride+x]<128 for y in range(y0,y1) for x in range(w))
+    def inked(y0,y1): return any(b[off+(h-1-y)*stride+x]<255 for y in range(y0,y1) for x in range(w))
     # Text starts inside the reserved top band and the grid only below it, so a
     # white gap separates the two; a page without a header has grid dots there.
     assert inked(118,168) and not inked(168,190)
-    assert inked(h-168,h-118)                    # footer band
+    # Gray footer follows the actual grid, not the bottom margin of the sheet.
+    gridrows=[];textrows=[]
+    for y in range(h):
+        row=b[off+(h-1-y)*stride:off+(h-1-y)*stride+w]
+        if any(v<128 for v in row): gridrows.append(y)
+        if 128 in row: textrows.append(y)
+    footer=[y for y in textrows if y>max(gridrows)]
+    assert footer and 0<min(footer)-max(gridrows)<50
+    assert max(footer)-max(gridrows)<=75  # 25 px raster padding + 50 px text band
+    assert not inked(max(footer)+1,h)
     assert not inked(0,118) and not inked(h-118,h)
     run('--decode','-i',page,'-o',output);assert output.read_bytes()==original
+    # Sparse sheets used to fail depending on paper size and orientation: black
+    # glyph edges outshone the dots and the raster search collapsed onto the
+    # text band. Gray text and a footer under the grid fixed all fourteen.
+    for paper in ['A4','Letter','A5','A3','A6','Legal','Tabloid']:
+        headerpage=root/('header-'+paper+'.bmp')
+        run('--encode','-i',source,'-o',headerpage,'--dpi',100,'--header','--paper',paper)
+        for scan in [headerpage,turn]:
+            if scan==turn: rotated(headerpage,turn)
+            run('--decode','-i',scan,'-o',output,'--expect',digest)
+            assert output.read_bytes()==original
+    # Dense first page plus a short last page, with and without recovery groups.
+    headerdata=root/'header-data.bin';headerdata.write_bytes((bytes(range(256))*220)[:56000])
+    for redundancy in [0,5]:
+        stem='header-multi-'+str(redundancy)
+        run('--encode','-i',headerdata,'-o',root/(stem+'.bmp'),'--dpi',100,'--header','-r',redundancy)
+        headerpages=sorted(root.glob(stem+'_*.bmp'));assert len(headerpages)==2
+        run('--decode','-o',output,*headerpages)
+        assert output.read_bytes()==headerdata.read_bytes()
+        turnedpages=[]
+        for index,scan in enumerate(headerpages):
+            turnedpage=root/(stem+'-turned-'+str(index)+'.bmp')
+            rotated(scan,turnedpage);turnedpages.append(turnedpage)
+        run('--decode','-o',output,*turnedpages)
+        assert output.read_bytes()==headerdata.read_bytes()
     for opts in [('--dpi','abc'),('--dpi','200x'),('--pages','-1'),('--paper','Unknown'),('--margin','nan'),('--paper-size','1x1mm'),('--margin','500mm'),('--image-dpi','100')]:
         run('--encode','-i',source,'-o',page,*opts,code=1)
     # Multiple sheets preserve size, repeat scans do not discard accumulated blocks.

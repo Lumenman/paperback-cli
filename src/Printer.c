@@ -608,13 +608,15 @@ static int Headlinescale(int band,int avail,const char *top,const char *bottom) 
 };
 
 // Service function, draws one line of header text centred in a band of the
-// given height.
+// given height. Gray text stays less prominent than the data raster: black
+// glyph edges outshine the dots, and the raster search takes its threshold
+// from the strongest local contrast on the sheet (experiments/NOTES.md 16).
 static void Drawheadline(uchar *sheet,int stride,int sheetheight,int x0,int avail,
   int ytop,int band,const char *s,int scale
 ) {
   Drawtext(sheet,stride,sheetheight,
     x0+max((avail-Textwidth(s,scale))/2,0),
-    ytop+max((band-7*scale)/2,0),s,scale,0);
+    ytop+max((band-7*scale)/2,0),s,scale,128);
 };
 
 // Prints one complete page or saves one bitmap.
@@ -887,10 +889,11 @@ static void Printnextpage(t_printdata *print) {
       k=Headlinescale(print->extratop,avail,s,foot);
       Drawheadline(sheet,stride,print->sheetheight,print->borderleft,avail,
         print->bordertop,print->extratop,s,k);
-      // The footer sits just above the bottom margin rather than under the
-      // grid, so it lands in the same place on every sheet of a set.
+      // The footer follows the actual grid instead of sitting at the bottom
+      // margin, so a short page leaves no blank band for the raster search to
+      // centre on. 1.20 placed it the same way (experiments/NOTES.md 16).
       Drawheadline(sheet,stride,print->sheetheight,print->borderleft,avail,
-        print->sheetheight-print->borderbottom-print->extrabottom,
+        gridtop+height,
         print->extrabottom,foot,k);
     };
     n=sizeof(BITMAPINFOHEADER)+256*sizeof(RGBQUAD);
