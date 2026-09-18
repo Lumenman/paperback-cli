@@ -222,7 +222,7 @@ int Addblock(t_block *block,int slot) {
 // number of pages to scan if there is still missing data. In the last case,
 // fills list of several first remaining pages in file descriptor.
 int Finishpage(int slot,int ngood,int nbad,uint32_t nrestored) {
-  int i,j,r,rmin,rmax,nrec,irec,firstblock,nrempages;
+  int i,j,r,rmin,rmax,nrec,irec,firstblock,nrempages,onpage;
   uchar *pr,*pd;
   t_fproc *pf;
   if (slot<0 || slot>=NFILE)
@@ -272,10 +272,11 @@ int Finishpage(int slot,int ngood,int nbad,uint32_t nrestored) {
     };
   };
   // Check whether there are still bad blocks on the page.
-  firstblock=(pf->page-1)*(pf->pagesize/NDATA);
-  for (j=firstblock; j<firstblock+pf->pagesize/NDATA && j<pf->nblock; j++) {
+  onpage=(int)(pf->pagesize/NDATA);
+  firstblock=(pf->page-1)*onpage;
+  for (j=firstblock; j<firstblock+onpage && j<pf->nblock; j++) {
     if (pf->datavalid[j]!=1) break; };
-  if (j<firstblock+pf->pagesize/NDATA && j<pf->nblock)
+  if (j<firstblock+onpage && j<pf->nblock)
     Message("Unrecoverable errors on page, please scan it again\n",0);
   else if (nbad>0)
     Message("Page processed\n, all bad blocks successfully restored",0);
@@ -285,8 +286,8 @@ int Finishpage(int slot,int ngood,int nbad,uint32_t nrestored) {
   nrempages=0;
   if (pf->pagesize>0) {
     for (i=0; i<pf->npages && nrempages<8; i++) {
-      firstblock=i*(pf->pagesize/NDATA);
-      for (j=firstblock; j<firstblock+pf->pagesize/NDATA && j<pf->nblock; j++) {
+      firstblock=i*onpage;
+      for (j=firstblock; j<firstblock+onpage && j<pf->nblock; j++) {
         if (pf->datavalid[j]==1)
           continue;
         // Page incomplete.

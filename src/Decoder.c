@@ -46,7 +46,7 @@
 static float Findpeaks(int *h,int n,float *bestpeak,float *beststep) {
   int i,j,k,ampl,amin,amax,d,l[NHYST],limit,sum;
   int npeak,dist,bestdist,bestcount,height[NPEAK];
-  float area,moment,peak[NPEAK],weight[NPEAK];
+  float area,moment,peak[NPEAK];
   float x0,step,sn,sx,sy,sxx,syy,sxy;
   // I expect at least 16 and at most NHYST points in the histogramm.
   if (n<16) return 0.0;
@@ -96,7 +96,6 @@ static float Findpeaks(int *h,int n,float *bestpeak,float *beststep) {
       if (amax*8<height[npeak-1]) continue;
       if (amax>height[npeak-1]*8) npeak--; };
     peak[npeak]=moment/area;
-    weight[npeak]=area;
     height[npeak]=amax;
     npeak++;
   };
@@ -591,7 +590,7 @@ static void Getxangle(t_procdata *pdata) {
   int h[NHYST],nh[NHYST],ystep;
   uchar *data,*pd;
   float weight,xpeak,xstep;
-  float maxweight,bestxpeak,bestxangle,bestxstep;
+  float maxweight,bestxpeak=0.0,bestxangle=0.0,bestxstep=0.0;
   // Get frequently used variables.
   sizex=pdata->sizex;
   data=pdata->data;
@@ -665,7 +664,7 @@ static void Getyangle(t_procdata *pdata) {
   int h[NHYST],nh[NHYST],xstep;
   uchar *data,*pd;
   float weight,ypeak,ystep;
-  float maxweight,bestypeak,bestyangle,bestystep;
+  float maxweight,bestypeak=0.0,bestyangle=0.0,bestystep=0.0;
   // Get frequently used variables.
   sizex=pdata->sizex;
   sizey=pdata->sizey;
@@ -863,7 +862,7 @@ static int Predictorigin(t_procdata *pdata,int posx,int posy,
 // 0 to 16 if block is correctly decoded and 17 if block is unrecoverable.
 int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
   int i,j,x,y,x0,y0,dx,dy,sizex,sizey,*bufx,*bufy;
-  int c,cmin,cmax,dotsize,shift,shiftmax,sum,answer,bestanswer;
+  int c,cmin,cmax,dotsize,shift,shiftmax=4,sum,answer=17,bestanswer;
   float xangle,yangle,xbmp,ybmp,xres,yres,sharpfactor;
   float xpeak,xstep,ypeak,ystep,halfdot,predx,predy;
   float sy,syy,disp,dispmin,dispmax;
@@ -1105,9 +1104,8 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
 };
 
 static void Decodenextblock(t_procdata *pdata) {
-  int answer,second,ngroup,percent,index,old;
+  int answer,second,ngroup,index,old;
   float predx,predy;
-  char s[TEXTLEN];
   t_data result,retry;
 
   // Display percent of executed data and, if known, data name in progress bar.

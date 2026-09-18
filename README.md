@@ -9,9 +9,11 @@ Use a modern GCC/MinGW-w64 compiler and GNU Make:
 ```sh
 make
 make test
+make check      # the same, built with -Wall -Wextra -Werror
+make sanitize   # the same, under AddressSanitizer and UndefinedBehaviorSanitizer
 ```
 
-Every dependency is in this repository; no submodule or package has to be fetched. The checks also need Python 3 (standard library only); the Makefile calls `python` on Windows and `python3` elsewhere. On Windows, ensure the MinGW-w64 `bin` directory comes before any other compiler on PATH. You can run the integration checks directly with `python test_cli.py ./paperback-cli.exe`.
+Every dependency is in this repository; no submodule or package has to be fetched. The checks also need Python 3 (standard library only); the Makefile calls `python` on Windows and `python3` elsewhere. On Windows, ensure the MinGW-w64 `bin` directory comes before any other compiler on PATH. You can run the integration checks directly with `python test_cli.py ./paperback-cli.exe`. `make check` treats warnings as errors and the tree is clean under it. `make sanitize` needs the sanitizer runtimes, which mingw-w64 GCC does not ship; on Windows build it under MSYS2 clang (`CC=clang`), or ask for the variant that needs no runtime and aborts instead of reporting: `make sanitize SANFLAGS="-fsanitize=undefined -fsanitize-undefined-trap-on-error"`.
 
 Builds and passes its checks with MinGW-w64 GCC on Windows and with GCC on Linux.
 

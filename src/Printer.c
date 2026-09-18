@@ -50,6 +50,8 @@ static void Drawblock(int index,t_data *block,uchar *bits,int width,int height,
 ) {
   int i,j,x,y,m,n;
   uint32_t t;
+  (void)ny;                            // Rows are reached by wrapping x over
+                                       // the bitmap, not by counting them
   // Convert cell index into the X-Y bitmap coordinates.
   x=(index%nx)*(NDOT+3)*dx+2*dx+border;
   y=(index/nx)*(NDOT+3)*dy+2*dy+border;
@@ -275,8 +277,8 @@ static void Finishreading(t_printdata *print) {
 
 // Prepares for printing. Despite its size, this routine is very quick.
 static void Initializeprinting(t_printdata *print) {
-  int i,dx,dy,px,py,nx,ny,width,height,success,rastercaps;
-  char fil[MAXPATH],nam[MAXFILE],ext[MAXEXT],jobname[TEXTLEN];
+  int i,dx,dy,px,py,nx,ny,width,height;
+  char fil[MAXPATH],nam[MAXFILE],ext[MAXEXT];
   BITMAPINFO *pbmi;
   //SIZE extent; //For calculating header/footer space
   // Prepare superdata.
@@ -306,6 +308,8 @@ static void Initializeprinting(t_printdata *print) {
   // the king (well, a sort of).
   if (print->outbmp[0]=='\0') {
     Reporterror("Print job creation is disabled");
+    Stopprinting(print);
+    return;
     //// Open standard Print dialog box.
     ////memset(&printdlg,0,sizeof(PRINTDLG));
     //printdlg.lStructSize=sizeof(PRINTDLG);
@@ -615,7 +619,7 @@ static void Printnextpage(t_printdata *print) {
   char s[TEXTLEN],foot[TEXTLEN],ts[TEXTLEN/2];
   char drv[MAXDRIVE],dir[MAXDIR],nam[MAXFILE],ext[MAXEXT],path[MAXPATH+32];
   uchar *bits;
-  uint32_t u,size,pagesize,offset;
+  uint32_t size,pagesize,offset;
   t_data block,cksum;
   //HANDLE hbmpfile;
   FILE *hbmpfile;
@@ -796,9 +800,12 @@ static void Printnextpage(t_printdata *print) {
     fnsplit(print->outbmp,drv,dir,nam,ext);
     if (ext[0]=='\0') strcpy(ext,".bmp");
     if (npages>1)
-      sprintf(path,"%s%s%s_%04i%s",drv,dir,nam,print->frompage+1,ext);
+      n=snprintf(path,sizeof(path),"%s%s%s_%04i%s",drv,dir,nam,
+        print->frompage+1,ext);
     else
-      sprintf(path,"%s%s%s%s",drv,dir,nam,ext);
+      n=snprintf(path,sizeof(path),"%s%s%s%s",drv,dir,nam,ext);
+    if (n<0 || n>=(int)sizeof(path)) {
+      Reporterror("Page name too long");Stopprinting(print);return; };
     // Create bitmap file.
     //hbmpfile=CreateFile(path,GENERIC_WRITE,0,NULL,
     //  CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);

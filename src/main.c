@@ -156,7 +156,8 @@ int main(int argc,char **argv) {
    if(pages) {
     char drv[MAXDRIVE],dir[MAXDIR],name[MAXFILE],ext[MAXEXT];
     fnsplit(inputs[0],drv,dir,name,ext);
-    snprintf(path,sizeof(path),"%s%s%s_%04d%s",drv,dir,name,i+1,ext);
+    if(snprintf(path,sizeof(path),"%s%s%s_%04d%s",drv,dir,name,i+1,ext)
+      >=(int)sizeof(path)) {Reporterror("Page name too long");status=1;break;}
    } else strcpy(path,inputs[i]);
    printf("Decoding %s\n",path);
    int errors=pb_errors;

@@ -35,6 +35,7 @@ void Reporterror(const char *input)
 
 void Message(const char *input, int progress) 
 {
+  (void)progress;                      // No progress bar on a CLI
   //printf("%s @ %d\%\n", input, progress);
   printf("%s\n", input);
 }
