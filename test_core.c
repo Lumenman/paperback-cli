@@ -3,6 +3,42 @@
 #include "src/main.c"
 #undef main
 #include <assert.h>
+// Exercise bit recognition before its result reaches the file assembler.
+#include "src/Decoder.c"
+
+static void check_recognition_addresses(void) {
+  // Real scans produced the three long addresses below out of erasure-assisted
+  // results whose CRC happened to match (experiments/NOTES.md 21). No address
+  // the assembler cannot use may set orientation or count as a read block.
+  const uint32_t addresses[]={0,90,0x1000005A,0x500001C2,0xA0000384,
+    SUPERBLOCK,1,0x5000005A,0xB0000000,0xC5F3BA47,0xFF7F032F,
+    0xC5F1F1E3,((MAXSIZE+NDATA-1)/NDATA)*NDATA};
+  for (unsigned n=0;n<sizeof(addresses)/sizeof(addresses[0]);n++) {
+    t_data encoded={0};encoded.addr=addresses[n];
+    for (int i=0;i<NDATA;i++) encoded.data[i]=(uchar)(i*37+11);
+    encoded.crc=Crc16((uchar *)&encoded,NDATA+4)^0x55AA;
+    Encode8((uchar *)&encoded,encoded.ecc,127);
+    uchar grid[NDOT][NDOT];
+    for (int y=0;y<NDOT;y++) {
+      uint32_t row;memcpy(&row,(uchar *)&encoded+y*4,4);
+      row^=(y&1)?0xAAAAAAAA:0x55555555;
+      for (int x=0;x<NDOT;x++) grid[y][x]=(row>>x)&1?0:255;
+    }
+    for (int best=0;best<2;best++) for (int erasures=0;erasures<2;erasures++) {
+      t_procdata state={0};state.cmax=255;state.orientation=-1;
+      state.mode=best?M_BEST:0;
+      t_data got={0};
+      int answer=Recognizebits(&got,grid,&state,erasures);
+      if (n<6) {
+        assert(answer==0 && state.orientation==0);
+        assert(memcmp(&got,&encoded,sizeof(got))==0);
+      } else {
+        assert(answer==17 && state.orientation==-1);
+      }
+    }
+  }
+}
+
 
 static void setup(const uchar *bytes,unsigned size) {
   Closefproc(0);
@@ -24,6 +60,7 @@ static void map_contains(const char *text) {
   size_t n=fread(buf,1,sizeof(buf)-1,f);buf[n]=0;fclose(f);assert(strstr(buf,text));
 }
 int main(void) {
+  check_recognition_addresses();
   assert(strnicmp("aBc","ABC",64)==0);assert(strnicmp("abc","abd",3)<0);
   char a[64],b[64];memset(a,'a',64);memset(b,'a',64);b[63]='b';assert(strnicmp(a,b,64)<0);
   uchar original[512];for(int i=0;i<512;i++) original[i]=(uchar)i;

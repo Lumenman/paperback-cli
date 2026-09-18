@@ -394,6 +394,15 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
       if (answer<=16) {
         crc=(ushort)(Crc16((uchar *)result,NDATA+4)^0x55AA);
         if (crc==result->crc) {
+          // CRC alone can accept a fabricated erasure result. Reject addresses
+          // the assembler cannot use BEFORE they lock orientation/lastgood.
+          // Group 1 remains valid for legacy pages; current encoding starts at 2.
+          if (result->addr!=SUPERBLOCK) {
+            uint32_t offset=result->addr & 0x0FFFFFFF;
+            unsigned group=result->addr>>28;
+            unsigned span=(group?group:1)*NDATA;
+            if (group>NGROUPMAX || offset>=MAXSIZE || offset%span) continue;
+          }
           // Data recognized correctly, save orientation of actually processed
           // page and factoring.
           pdata->orientation=r;

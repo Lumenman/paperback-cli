@@ -1,3 +1,6 @@
+#ifndef PAPERBAK_H_INCLUDED
+#define PAPERBAK_H_INCLUDED
+
 ////////////////////////////////////////////////////////////////////////////////
 //                                                                            //
 //                          THIS SOFTWARE IS FREE!                            //
@@ -395,3 +398,5 @@ void print_filetime(FILETIME ftime);
 
 extern int pb_errors, pb_force;
 extern double pb_paperwidth, pb_paperheight, pb_margins[4];
+
+#endif /* PAPERBAK_H_INCLUDED */

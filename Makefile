@@ -22,8 +22,10 @@ main: $(EX)
 $(EX): $(SOURCES) $(HEADERS)
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(SOURCES) $(LDFLAGS) $(LDLIBS) -o $@
 
-$(CORE): test_core.c $(filter-out $(SDIR)/main.c,$(SOURCES)) $(HEADERS) $(SDIR)/main.c
-	$(CC) $(CPPFLAGS) $(CFLAGS) test_core.c $(filter-out $(SDIR)/main.c,$(SOURCES)) $(LDFLAGS) $(LDLIBS) -o $@
+# test_core includes main.c and Decoder.c directly, to reach their static
+# functions; both are therefore filtered out of the link.
+$(CORE): test_core.c $(filter-out $(SDIR)/main.c $(SDIR)/Decoder.c,$(SOURCES)) $(HEADERS) $(SDIR)/main.c $(SDIR)/Decoder.c
+	$(CC) $(CPPFLAGS) $(CFLAGS) test_core.c $(filter-out $(SDIR)/main.c $(SDIR)/Decoder.c,$(SOURCES)) $(LDFLAGS) $(LDLIBS) -o $@
 
 test: $(EX) $(CORE)
 	$(PYTHON) test_cli.py ./$(EX)
