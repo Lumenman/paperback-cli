@@ -27,10 +27,14 @@
 
 #ifdef _WIN32
 #include <windows.h>
-#elif __linux__
-#include <sys/stat.h>
+#include <io.h>
+#else
+#include <unistd.h>                    // close(), beside the open() below
 #endif
+#include <sys/stat.h>
 #include <ctype.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <utime.h>
@@ -357,6 +361,27 @@ int Namefrompagelabel(const char *label,char *out,int size) {
   return 0;
 };
 
+// Creates a file for writing with the private mode restored backups need:
+// they routinely hold secrets and the page carries only one attribute bit, so
+// never widen access. A name taken off a sheet is created exclusively - a
+// restore run in the wrong directory must not eat whatever happened to share
+// the name, and that goes for the map as much as for the data. An explicit -o
+// truncates, as it always has: the caller named that path.
+static FILE *Createfile(const char *path,const char *mode,int exclusive) {
+  int flags=O_WRONLY|O_CREAT|(exclusive?O_EXCL:O_TRUNC);
+#ifdef _WIN32
+  int fd=_open(path,flags|(strchr(mode,'b')?_O_BINARY:_O_TEXT),_S_IREAD|_S_IWRITE);
+  if (fd<0) return NULL;
+  FILE *f=_fdopen(fd,mode);
+#else
+  int fd=open(path,flags,0600);
+  if (fd<0) return NULL;
+  FILE *f=fdopen(fd,mode);
+#endif
+  if (f==NULL) close(fd);
+  return f;
+}
+
 // Saves accumulated data after all scans. Returns 0 for complete output,
 // 2 for partial output, and -1 on error. The caller owns the descriptor.
 int Saverestoredfile(int slot,int force) {
@@ -377,7 +402,7 @@ int Saverestoredfile(int slot,int force) {
   uint32_t length=pf->origsize;
   const char *path=pb_outfile;
   char mapname[MAXPATH+8],chosen[MAXPATH],note[MAXPATH+64];
-  FILE *exists;
+  int exclusive=0;
   // With no -o, the page says what the file was called. Its label is printed
   // when the page is read either way, so what lands on disk is never a surprise.
   if (path[0]==0) {
@@ -385,32 +410,19 @@ int Saverestoredfile(int slot,int force) {
       Reporterror("The page carries no name that can be a file; pass -o");
       return -1; };
     path=chosen;
-    // An explicit -o overwrites, as it always has: the caller named that path.
-    // A name taken off a sheet must not, or a restore run in the wrong directory
-    // quietly eats whatever happened to share the name.
-    exists=fopen(path,"rb");
-    if (exists!=NULL) {
-      fclose(exists);
-      snprintf(note,sizeof(note),
-        "%s is already here; pass -o to restore it somewhere else",path);
-      Reporterror(note);
-      return -1; }; };
+    exclusive=1; };
   // This clears pf->data in place, including the parity written into gaps by
   // Addblock, so it is only safe because the CLI saves once after every scan.
   // Turning pb_autosave on would destroy parity later pages still need.
   for(int i=0;i<pf->nblock;i++)
     if(pf->datavalid[i]!=1) memset(data+(size_t)i*NDATA,0,NDATA);
-  // Restored backups routinely hold secrets, and the page carries only one
-  // attribute bit, so never widen access: create the file as 0600. The umask
-  // covers --force output too, which skips the attribute block below.
-#ifdef __linux__
-  mode_t oldmask=umask(0077);
-#endif
-  FILE *out=fopen(path,"wb");
-#ifdef __linux__
-  umask(oldmask);
-#endif
-  if(!out) {Reporterror("Unable to create output");goto failed;}
+  FILE *out=Createfile(path,"wb",exclusive);
+  if(!out) {
+    snprintf(note,sizeof(note),exclusive && errno==EEXIST?
+      "%s is already here; pass -o to restore it somewhere else":
+      "Unable to create output %s",path);
+    Reporterror(note);goto failed;
+  }
   int ok=fwrite(data,1,length,out)==length;
   if(fclose(out)!=0) ok=0;
   if(!ok) {Reporterror("Output write error");goto failed;}
@@ -420,15 +432,20 @@ int Saverestoredfile(int slot,int force) {
   {
     // Rewrite the map on every save, so a later complete restore cannot leave stale gaps.
     snprintf(mapname,sizeof(mapname),"%s.map",path);
+    FILE *map=Createfile(mapname,"w",exclusive);
 #ifdef __linux__
-    oldmask=umask(0077);
-#endif
-    FILE *map=fopen(mapname,"w");
-#ifdef __linux__
-    umask(oldmask);
     if(map) chmod(mapname,0600);       // an existing map keeps its old mode otherwise
 #endif
-    if(!map) {Reporterror("Unable to create missing-range map");goto failed;}
+    if(!map) {
+      snprintf(note,sizeof(note),exclusive && errno==EEXIST?
+        "%s is already here; pass -o to restore it somewhere else":
+        "Unable to create missing-range map %s",mapname);
+      Reporterror(note);
+      // The data file was created exclusively in this run, so removing it loses
+      // nothing of the caller's - and leaves the advice above possible to take.
+      if(exclusive) remove(path);
+      goto failed;
+    }
     fprintf(map,"Format: original file, missing bytes filled with zeros\nStatus: %s\nFile checksum: %s\nOriginal bytes: %u\nRecovered blocks: %d/%d\nMissing ranges: start inclusive, end exclusive; offsets in original file\n",
       partial?"DAMAGED":"COMPLETE",incomplete?"not checked (missing blocks)":badcrc?"MISMATCH (damage locations unknown)":"OK",
       length,pf->ndata,pf->nblock);

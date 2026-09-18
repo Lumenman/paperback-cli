@@ -255,6 +255,16 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     again=run('--decode','-i',rule,cwd=here,code=1)
     assert again.stderr.startswith('label.dat is already here'),again.stderr
     assert (here/'label.dat').read_bytes()==original
+    # The map is a file in the current directory too, and it used to be opened
+    # with plain "w": a restore could silently eat one and still exit 0. Both
+    # names are now created exclusively, and the data file this run did create
+    # is taken back, so the advice in the message stays possible to follow.
+    stale=root/'restore-map';stale.mkdir()
+    (stale/'label.dat.map').write_text('valuable existing file')
+    blocked=run('--decode','-i',rule,cwd=stale,code=1)
+    assert blocked.stderr.startswith('label.dat.map is already here'),blocked.stderr
+    assert (stale/'label.dat.map').read_text()=='valuable existing file'
+    assert not (stale/'label.dat').exists()
     # -o still wins and still overwrites the path the caller named.
     run('--decode','-i',rule,'-o',output);assert output.read_bytes()==original
     run('--decode','-i',rule,'-o',output);assert output.read_bytes()==original
