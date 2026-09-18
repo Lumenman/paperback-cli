@@ -549,7 +549,17 @@ static void Initializeprinting(t_printdata *print) {
   print->py=py;
   print->nx=nx;
   print->ny=ny;
-  printf("Sheet: %d x %d pixels at %d DPI; actual dot density %.2f DPI\n",print->sheetwidth,print->sheetheight,print->ppix,(double)print->ppix/dx);
+  // Both densities are reported as drawn, not as asked for. The cell is a whole
+  // number of pixels and so is the dot inside it, so -d and -s are rounded, and
+  // at a small cell -s has very few steps: with --image-dpi left at three times
+  // -d the cell is 3 px, where -s 55 and -s 70 draw the same 2 px dot and -s 85
+  // and -s 100 draw the same 3 px one. Printing three sheets at 55, 70 and 85 to
+  // compare them gets two sheets of one dot and one of another, silently, unless
+  // the numbers below are read.
+  printf("Sheet: %d x %d pixels at %d DPI; actual dot density %.2f DPI; "
+    "cell %dx%d px, dot %dx%d px = %d%% of the cell\n",
+    print->sheetwidth,print->sheetheight,print->ppix,(double)print->ppix/dx,
+    dx,dy,px,py,(px*100+dx/2)/dx);
   // Start printing.
   //if (print->outbmp[0]=='\0') {
   //  if (pagesetup.hDevNames!=NULL)
