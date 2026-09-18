@@ -166,5 +166,28 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     holed=root/'holed.bmp';holed.write_bytes(hole)
     blank=lambda rows:sum(set(row)=={'.'} for row in rows)
     assert blank(blockmap(holed,code=1))>blank(clean)
+    # The sheet carries its own ruler. A dot is printed a known fraction of the
+    # cell and ink on paper only spreads, so a dot measuring NARROWER than it
+    # was printed means the scan squared off its edges - sharpening or the
+    # scanner's own contrast - and threw away the partial pixels the decoder
+    # reads. At --dpi 100 the printer rounds a dot to whole pixels of a 3 px
+    # cell, so -s 50 lands on 2 px and a digital page must read exactly 67%.
+    def dotwidth(scan,*opts):
+        got=run('--decode','--quality-map','-i',scan,'-o',output,*opts)
+        said=[l for l in got.stdout.splitlines() if l.startswith('Dot measures')]
+        assert said,got.stdout
+        return said
+    tiny=root/'tiny.bin';tiny.write_bytes(original)
+    rule=root/'rule.bmp'
+    run('--encode','-i',tiny,'-o',rule,'--dpi',100,'-s',50)
+    assert '67% of the cell' in dotwidth(rule)[0]
+    # Told the page was printed with dots half again as wide as it really was,
+    # the ruler must speak up on its own, without --quality-map: that is the
+    # shape of a scan that came back with its edges cut.
+    assert len(dotwidth(rule,'-s',100))==2
+    assert 'only spreads' in dotwidth(rule,'-s',100)[1]
+    run('--encode','-i',tiny,'-o',rule,'--dpi',100,'-s',100)
+    assert '100% of the cell' in dotwidth(rule)[0]
+    assert len(dotwidth(rule,'-s',100))==1
 print('All CLI checks passed')
 

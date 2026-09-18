@@ -59,7 +59,7 @@ static void help(void) {
  "  -r, --redundancy N    One recovery block per N data blocks, 2..10; default 5\n"
  "  -b, --border          Black outer border\n"
  "  --header              Print a text header and footer; costs grid rows\n"
- "  --quality-map         Print a per-block decode map for every scan\n"
+ "  --quality-map         Print a decode map and dot width per scan\n"
  "  -h, --help            Help\n"
  "  -v, --version         Version\n"
  "Output uses the exact -o path; OUTPUT.map records gaps and integrity.\n"

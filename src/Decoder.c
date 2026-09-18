@@ -38,6 +38,8 @@
 #define NPEAK          32              // Maximal number of peaks
 #define SUBDX          8               // X size of subblock, pixels
 #define SUBDY          8               // Y size of subblock, pixels
+#define NRULER         49              // Profile bins, cell centre to centre
+#define NRULERDOT      400             // Isolated dots the ruler averages
 
 // Given hystogramm h of length n points, locates black peaks and determines
 // phase and step of the grid.
@@ -151,6 +153,138 @@ static float Findpeaks(int *h,int n,float *bestpeak,float *beststep) {
 
 // Confidence of a byte that contains no dot yet.
 #define MAXMARGIN 0x7FFFFFFF
+
+// The sheet carries its own ruler. A dot is printed pb_dotpercent of the cell
+// wide, and ink on paper only ever spreads: through a printer, a sheet of paper
+// and a pane of glass a dot comes back wider, never narrower. So a dot that
+// measures narrower than it was printed says the scan squared off its edges --
+// sharpening, the scanner's own contrast, or a white point -- and the pixels of
+// partial coverage it threw away are the ones the decoder reads. That damage is
+// applied before the file is written and leaves no other trace in it. After the
+// stroke-width check of the paper-sound project; experiments/NOTES.md 9 carries
+// the numbers and what the ruler does and does not catch.
+//
+// The profile runs from the centre of one cell to the centre of the next, in
+// steps of a twentyfourth of a cell, and takes both cuts through every isolated
+// dot found. It is read off the UNSHARP buffer: the decoder's own unsharp mask
+// is exactly the kind of edge steepening being looked for.
+static double rulerprof[NRULER];       // Sum of samples per profile bin
+static int    rulerdots;               // Isolated dots measured so far
+
+// Bitmap value at a fractional position, linear between the four pixels around
+// it, or -1 outside. The profile is sampled AT fixed fractions of the cell
+// rather than binned by where whole pixels happen to fall: a page printed and
+// scanned at the same dpi has a grid step of very nearly a whole number of
+// pixels, so its dots never walk off their phase, and binning leaves most of a
+// profile this fine empty. Interpolating feeds every bin from every dot.
+static double Atxy(uchar *buf,int dx,int dy,double x,double y) {
+  int i,j;
+  double fx,fy;
+  uchar *p;
+  i=(int)x; j=(int)y;
+  if (i<0 || j<0 || i>=dx-1 || j>=dy-1)
+    return -1.0;
+  fx=x-i; fy=y-j;
+  p=buf+j*dx+i;
+  return (p[0]+(p[1]-p[0])*fx)*(1.0-fy)+(p[dx]+(p[dx+1]-p[dx])*fx)*fy;
+};
+
+// Accumulates the profile of every dot that stands alone in its cross, given
+// the block's own grid: peaks and steps are of the data dots, in unsharp.
+static void Measuredot(t_procdata *pdata,float xpeak,float xstep,
+  float ypeak,float ystep) {
+  int i,j,b,dx,dy,margin;
+  double cx,cy,u,h,v,one[NRULER];
+  uchar *buf;
+  buf=pdata->unsharp;
+  dx=pdata->bufdx;
+  dy=pdata->bufdy;
+  // A dot is dark against its four neighbours by this much or it is not alone.
+  // A level rather than a threshold on the dot itself: at two pixels per dot
+  // blur keeps an isolated dot well away from cmin, and what matters here is
+  // only that the cells beside it are bare paper.
+  margin=(pdata->cmax-pdata->cmin)/4;
+  for (j=1; j<NDOT-1 && rulerdots<NRULERDOT; j++) {
+    cy=ypeak+ystep*j;
+    for (i=1; i<NDOT-1 && rulerdots<NRULERDOT; i++) {
+      cx=xpeak+xstep*i;
+      v=Atxy(buf,dx,dy,cx,cy);
+      if (v<0.0) continue;
+      if (v+margin>Atxy(buf,dx,dy,cx-xstep,cy) ||
+        v+margin>Atxy(buf,dx,dy,cx+xstep,cy) ||
+        v+margin>Atxy(buf,dx,dy,cx,cy-ystep) ||
+        v+margin>Atxy(buf,dx,dy,cx,cy+ystep)) continue;
+      // Both cuts through the same dot go into the same profile: one number is
+      // what the question needs, and a printer that spreads its two axes
+      // differently spreads them both. Gathered for the dot as a whole and kept
+      // only if the whole of it fit, so that a dot at the edge of the buffer
+      // cannot tilt the profile with the side of it that did.
+      for (b=0; b<NRULER; b++) {
+        u=2.0*b/(NRULER-1.0)-1.0;
+        h=Atxy(buf,dx,dy,cx+u*xstep,cy);
+        v=Atxy(buf,dx,dy,cx,cy+u*ystep);
+        if (h<0.0 || v<0.0) break;
+        one[b]=h+v; };
+      if (b<NRULER) continue;
+      for (b=0; b<NRULER; b++)
+        rulerprof[b]+=one[b];
+      rulerdots++;
+    };
+  };
+};
+
+// Dot width at half of its own depth, in percent of the cell, or 0 if the
+// profile is not complete enough to be believed.
+static float Dotwidth(void) {
+  int b,bmin;
+  double p[NRULER],ink,paper,half,lo,hi;
+  if (rulerdots<NRULERDOT/8)
+    return 0.0;                        // Too few dots stood alone
+  for (b=0; b<NRULER; b++)
+    p[b]=rulerprof[b]/(2*rulerdots);   // Two cuts through each dot
+  for (bmin=0,b=1; b<NRULER; b++)
+    if (p[b]<p[bmin]) bmin=b;
+  for (b=0,paper=p[0]; b<NRULER; b++)
+    if (p[b]>paper) paper=p[b];
+  ink=p[bmin];
+  if (paper-ink<8.0)
+    return 0.0;                        // Nothing here is a dot
+  half=(ink+paper)/2.0;
+  // Walk out of the dot to where the profile crosses its own half depth, and
+  // interpolate into the bin outside. Clamped at the window edges, where the
+  // crossing is the window's and the answer is thrown away below.
+  for (b=bmin; b>0 && p[b]<half; b--);
+  if (b==bmin) return 0.0;
+  lo=b+(p[b]-half)/(p[b]-p[b+1]);
+  for (b=bmin; b<NRULER-1 && p[b]<half; b++);
+  if (b==bmin) return 0.0;
+  hi=b-(p[b]-half)/(p[b]-p[b-1]);
+  if (lo<=0.0 || hi>=NRULER-1)
+    return 0.0;                        // Dot wider than the window
+  return (float)((hi-lo)*2.0/(NRULER-1)*100.0);
+};
+
+// Reports the ruler: what it measured, and what it means if the dot came back
+// narrower than the printer drew it.
+static void Printdotwidth(void) {
+  float width;
+  width=Dotwidth();
+  if (width<=0.0) {
+    if (pb_qualitymap)
+      printf("Dot width not measurable on this page\n");
+    return; };
+  if (pb_qualitymap)
+    printf("Dot measures %.0f%% of the cell against %d%% printed "
+      "(-s, which the printer rounds to whole pixels); %d dots\n",
+      width,pb_dotpercent,rulerdots);
+  if (width<0.9*pb_dotpercent)
+    printf("Dot measures %.0f%% of the cell but -s printed it %d%%, and ink on "
+      "paper only spreads: a dot comes back wider, never narrower. Something "
+      "in the scan is squaring off the edges - sharpening, the scanner's own "
+      "contrast, or a white point - and the partial pixels it throws away are "
+      "the ones read here. Rescan with every adjustment off, or pass the -s "
+      "the page was printed with\n",width,pb_dotpercent);
+};
 
 // Given grid of recognized dots, extracts saved information. Returns number of
 // corrected erorrs (0..16) on success and 17 if information is not readable.
@@ -841,6 +975,10 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
   xpeak+=2.0*xstep;
   ystep=ystep/(NDOT+3.0);
   ypeak+=2.0*ystep;
+  // Read the ruler off the first blocks that locate, while the buffer holds
+  // this block's own unsharpened pixels and its own grid.
+  if (rulerdots<NRULERDOT)
+    Measuredot(pdata,xpeak,xstep,ypeak,ystep);
   // In search-for-the-best-quality mode, I look for the best possible
   // decoding. Helps to estimate the overall quality of the picture.
   bestanswer=17;
@@ -1097,6 +1235,7 @@ static void Finishdecoding(t_procdata *pdata) {
   int i,fileindex;
   if (pb_qualitymap)
     Printqualitymap(pdata);
+  Printdotwidth();
   // Pass gathered data to file processor.
   if (pdata->superblock.addr==0)
     Reporterror("Page label is not readable");
@@ -1204,6 +1343,8 @@ void Startbitmapdecoding(t_procdata *pdata,uchar *data,int sizex,int sizey) {
   pdata->sizey=sizey;
   pdata->blockborder=0.0;              // Autoselect
   pdata->step=1;
+  memset(rulerprof,0,sizeof(rulerprof));
+  rulerdots=0;
   if (pb_bestquality)
     pdata->mode|=M_BEST;
   //Updatebuttons();
