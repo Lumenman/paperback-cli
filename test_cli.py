@@ -70,7 +70,10 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
         for y in range(h): d[off+y*stride+left:off+y*stride+right]=b'\xff'*(right-left)
         path=root/f'damage{n}.bmp';path.write_bytes(d);damaged.append(path)
         run('--decode','-i',path,'-o',root/f'fail{n}',code=1)
-        run('--decode','--force','-i',path,'-o',root/f'partial{n}.rar',code=2)
+        # A partial restore says so beside its digest: its gaps are zeros, so
+        # it cannot match the sheet and only tells two attempts apart.
+        hurt=run('--decode','--force','-i',path,'-o',root/f'partial{n}.rar',code=2)
+        assert 'of the damaged output' in hurt.stdout,hurt.stdout
         part=root/f'partial{n}.rar';assert part.exists()
         data=part.read_bytes();assert len(data)==len(original)
         text=Path(str(part)+'.map').read_text()
@@ -97,6 +100,11 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     run('--decode','--force','-i',broken,'-o',output,code=1)
     digest=hashlib.sha256(original).hexdigest()
     run('--encode','-i',source,'-o',page,'--dpi',100)
+    # The digest of what was written is printed whether or not there is
+    # anything to compare it against: the encoder printed it, --header puts it
+    # on the sheet, and the file's own checksum is only 16 bits.
+    plain=run('--decode','-i',page,'-o',output)
+    assert ('SHA-256 '+digest) in plain.stdout,plain.stdout
     got=run('--decode','-i',page,'-o',output,'--expect',digest.upper())
     assert 'matches --expect' in got.stdout and output.read_bytes()==original
     bad=run('--decode','-i',page,'-o',output,'--expect','f'*64,code=1)
@@ -208,6 +216,7 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     got=run('--decode','-i',rule,cwd=here)
     assert (here/'label.dat').read_bytes()==original
     assert (here/'label.dat.map').exists()
+
     assert 'Saved label.dat' in got.stdout,got.stdout
     again=run('--decode','-i',rule,cwd=here,code=1)
     assert again.stderr.startswith('label.dat is already here'),again.stderr

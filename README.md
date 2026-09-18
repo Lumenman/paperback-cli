@@ -58,6 +58,8 @@ Every scan is also measured against the page's own ruler. The dot is printed a k
 
 The checksum the page carries for the whole file is 16 bits, and so is the one each block carries for itself. Both are there to catch damage, and they do; neither is proof. A block whose Reed-Solomon correction had to be pushed to its limit rests on those 16 bits alone, and one such block in 65536 is accepted wrongly -- which the file checksum then catches, itself 16 bits. For a backup that matters, record the SHA-256 the encoder prints and check the restore against it with `--expect`; `--header` prints it on the sheet as well.
 
+Every restore prints the SHA-256 of what it wrote, so it can be checked by eye against the digest the encoder printed or `--header` put on the sheet. A partial restore says so beside its digest: its gaps are zeros, so it cannot match the sheet and is only good for telling two attempts at the same damaged page apart.
+
 `--expect HEX` checks the restored bytes against a SHA-256 digest, the one printed at encode time or read off the page footer. Case does not matter. On a mismatch the file is still written, the two digests are reported and the exit status is 1, so a wrong or mixed-up backup cannot pass silently.
 
 Output is saved after processing the entire input list. The summary reports recovered/missing blocks and, when page geometry is consistent, page numbers to rescan. A readable page header is required to associate its blocks with a file. Completely unreadable pages cannot contribute data. On Linux the restored file and its `.map` are set to mode 0600: a page stores a single attribute bit, so original permissions cannot be reproduced and are never widened.

@@ -455,15 +455,28 @@ int Saverestoredfile(int slot,int force) {
   // With --expect the restored bytes are checked against a digest the user
   // wrote down at encode time; the file is still written, so the mismatch is
   // reported rather than hidden.
+  // The digest of what was written, always, not only when there is something
+  // to compare it against. The encoder printed it and --header puts it on the
+  // sheet, so with it here the restore can be checked by eye against the paper
+  // - and the file's own checksum is 16 bits, which catches damage but proves
+  // nothing. A partial restore is named as such: its gaps are zeros, so its
+  // digest cannot match the sheet and is only good for telling two attempts of
+  // the same damaged page apart.
   int mismatch=0;
-  if(pb_expect[0]) {
+  {
     char got[SHA256_HEXLEN+1];
     Sha256hex(data,length,got);
-    mismatch=strcmp(got,pb_expect)!=0;
-    if(mismatch)
-      fprintf(stderr,"SHA-256 of the restored file is %s, --expect said %s\n",got,pb_expect);
+    if(pb_expect[0]) {
+      mismatch=strcmp(got,pb_expect)!=0;
+      if(mismatch)
+        fprintf(stderr,"SHA-256 of the restored file is %s, --expect said %s\n",got,pb_expect);
+      else
+        printf("SHA-256 %s matches --expect\n",got);
+    }
+    else if(partial)
+      printf("SHA-256 %s (of the damaged output, gaps zero-filled)\n",got);
     else
-      printf("SHA-256 %s matches --expect\n",got);
+      printf("SHA-256 %s\n",got);
   }
   printf("Saved %s%s\n",path,mismatch?" (HASH MISMATCH)":partial?" (DAMAGED)":"");
   if(mismatch) {Reporterror("Restored file does not match --expect");return -1;}

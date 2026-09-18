@@ -47,6 +47,7 @@ static void help(void) {
  "       paperback-cli --decode [-o FILE] SCAN1.bmp SCAN2.bmp ...\n"
  "  -p, --pages N         Read base_0001.bmp through base_NNNN.bmp\n"
  "  --expect HEX          Check the restored file against a SHA-256 digest\n"
+ "                        (a decode prints the digest it wrote in any case)\n"
  "  -f, --force           Accept damaged pages; save with zero-filled gaps\n"
  "  --paper NAME          A3, A4 (default), A5, A6, Letter, Legal, Tabloid\n"
  "  --paper-size WxHmm    Custom sheet size (also WxHin)\n"
