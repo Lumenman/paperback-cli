@@ -59,5 +59,29 @@ int main(void) {
   assert(pb_fproc[slot].ndata==2);
   for(int i=90;i<180;i++) assert(pb_fproc[slot].data[i]==0x24);
   Closefproc(slot);
+  // A page label turns into a file name only after being read as a name and
+  // never as a path: those bytes come off a scanned sheet and can say anything.
+  {
+    char got[MAXPATH],big[65];
+    static const struct {const char *label,*want;} named[]={
+      {"plain.bin","plain.bin"},
+      {"../../etc/passwd","passwd"},         // a separator starts the name over
+      {"C:evil","evil"},
+      {"dir\\sub\\file.rar","file.rar"},
+      {"bad\tname","bad_name"},              // control characters keep their width
+      {"q?*<>|\"x","q______x"},
+      {"trail.  ","trail"}};                 // Windows drops these itself
+    static const char *refused[]={"","..",".","/","...   "};
+    for(size_t i=0;i<sizeof(named)/sizeof(named[0]);i++) {
+      assert(Namefrompagelabel(named[i].label,got,sizeof(got))==0);
+      assert(strcmp(got,named[i].want)==0);
+    }
+    for(size_t i=0;i<sizeof(refused)/sizeof(refused[0]);i++)
+      assert(Namefrompagelabel(refused[i],got,sizeof(got))<0);
+    memset(big,'A',64);big[64]=0;            // a label may fill all 64 bytes
+    assert(Namefrompagelabel(big,got,sizeof(got))==0);
+    assert(strlen(got)==64);
+    assert(Namefrompagelabel("plain.bin",got,4)<0);      // no room for the name
+  }
   puts("All core checks passed");return 0;
 }

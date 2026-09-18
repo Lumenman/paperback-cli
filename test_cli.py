@@ -4,8 +4,8 @@ import hashlib, os, random, struct, subprocess, sys, tempfile
 
 EXE = str(Path(sys.argv[1] if len(sys.argv)>1 else ('paperback-cli.exe' if os.name=='nt' else './paperback-cli')).resolve())
 
-def run(*args, code=0):
-    p=subprocess.run([EXE,*map(str,args)],capture_output=True,text=True,timeout=60)
+def run(*args, code=0, cwd=None):
+    p=subprocess.run([EXE,*map(str,args)],capture_output=True,text=True,timeout=60,cwd=cwd)
     assert p.returncode==code,(args,p.returncode,p.stdout,p.stderr)
     return p
 
@@ -200,5 +200,20 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
             if l=='Page label: label.dat'],got.stdout
     got=run('--decode','-o',output,*pages)      # several sheets of one file
     assert sum(l.startswith('Page label:') for l in got.stdout.splitlines())==1
+    # Without -o the file is restored under the name the page carries, in the
+    # current directory. The name comes off a scanned sheet, so it is never
+    # allowed to overwrite: a restore run in the wrong place would otherwise eat
+    # whatever happened to share it.
+    here=root/'restore';here.mkdir()
+    got=run('--decode','-i',rule,cwd=here)
+    assert (here/'label.dat').read_bytes()==original
+    assert (here/'label.dat.map').exists()
+    assert 'Saved label.dat' in got.stdout,got.stdout
+    again=run('--decode','-i',rule,cwd=here,code=1)
+    assert 'Refusing to overwrite' in again.stderr,again.stderr
+    assert (here/'label.dat').read_bytes()==original
+    # -o still wins and still overwrites the path the caller named.
+    run('--decode','-i',rule,'-o',output);assert output.read_bytes()==original
+    run('--decode','-i',rule,'-o',output);assert output.read_bytes()==original
 print('All CLI checks passed')
 

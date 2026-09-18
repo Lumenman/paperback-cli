@@ -30,6 +30,7 @@
 #elif __linux__
 #include <sys/stat.h>
 #endif
+#include <ctype.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <utime.h>
@@ -309,6 +310,54 @@ int Finishpage(int slot,int ngood,int nbad,uint32_t nrestored) {
   return pf->ndata==pf->nblock ? 0 : (nrempages ? nrempages : 1);
 };
 
+// Turns the page label into a name to restore under when the caller named no
+// output. The label is 64 bytes off a scanned sheet: it need not be terminated,
+// it holds whatever the name of the encoded file held, and a sheet can be made
+// to carry anything at all. So it is read as a NAME and never as a path -
+// everything up to the last separator is dropped, the characters a name may not
+// hold are replaced, and what is left is written in the current directory.
+// Returns 0 on success, -1 if nothing usable is left.
+int Namefrompagelabel(const char *label,char *out,int size) {
+  int i,n;
+  unsigned char c;
+  char base[65];
+  for (i=0,n=0; i<64 && label[i]!=0; i++) {
+    c=(unsigned char)label[i];
+    if (c=='/' || c=='\\' || c==':')
+      n=0;                             // A separator starts the name over, so a
+    else if (c<0x20 || c==0x7F ||      // label of ../../etc/passwd leaves passwd
+      c=='<' || c=='>' || c=='"' || c=='|' || c=='?' || c=='*')
+      base[n++]='_';                   // Replaced rather than dropped: the name
+    else                               // keeps its length, so two labels cannot
+      base[n++]=(char)c; };            // be cleaned into the same file
+  while (n>0 && (base[n-1]=='.' || base[n-1]==' '))
+    n--;                               // Windows drops these silently
+  base[n]=0;
+  if (n==0 || strcmp(base,".")==0 || strcmp(base,"..")==0)
+    return -1;
+#ifdef _WIN32
+  // A file called CON or LPT1 cannot be created whatever the sheet says, and
+  // opening one talks to a device instead. Refused rather than renamed, so the
+  // caller is told to pass -o rather than handed a file under a name they did
+  // not ask for.
+  {
+    static const char *device[]={"CON","PRN","AUX","NUL","COM1","COM2",
+      "COM3","COM4","COM5","COM6","COM7","COM8","COM9","LPT1","LPT2",
+      "LPT3","LPT4","LPT5","LPT6","LPT7","LPT8","LPT9"};
+    char stem[65];
+    int j;
+    for (j=0; j<n && base[j]!='.'; j++)
+      stem[j]=(char)toupper((unsigned char)base[j]);
+    stem[j]=0;
+    for (i=0; i<(int)(sizeof(device)/sizeof(device[0])); i++)
+      if (strcmp(stem,device[i])==0) return -1; }
+#endif
+  if (n>=size)
+    return -1;
+  memcpy(out,base,n+1);
+  return 0;
+};
+
 // Saves accumulated data after all scans. Returns 0 for complete output,
 // 2 for partial output, and -1 on error. The caller owns the descriptor.
 int Saverestoredfile(int slot,int force) {
@@ -328,7 +377,23 @@ int Saverestoredfile(int slot,int force) {
   uchar *data=pf->data;
   uint32_t length=pf->origsize;
   const char *path=pb_outfile;
-  char mapname[MAXPATH+8];
+  char mapname[MAXPATH+8],chosen[MAXPATH];
+  FILE *exists;
+  // With no -o, the page says what the file was called. Its label is printed
+  // when the page is read either way, so what lands on disk is never a surprise.
+  if (path[0]==0) {
+    if (Namefrompagelabel(pf->name,chosen,sizeof(chosen))<0) {
+      Reporterror("The page carries no name that can be a file; pass -o");
+      return -1; };
+    path=chosen;
+    // An explicit -o overwrites, as it always has: the caller named that path.
+    // A name taken off a sheet must not, or a restore run in the wrong directory
+    // quietly eats whatever happened to share the name.
+    exists=fopen(path,"rb");
+    if (exists!=NULL) {
+      fclose(exists);
+      Reporterror("Refusing to overwrite an existing file; pass -o");
+      return -1; }; };
   // This clears pf->data in place, including the parity written into gaps by
   // Addblock, so it is only safe because the CLI saves once after every scan.
   // Turning pb_autosave on would destroy parity later pages still need.

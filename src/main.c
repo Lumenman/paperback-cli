@@ -43,11 +43,11 @@ static double dimension(const char *s) {
 }
 static void help(void) {
  puts("Usage: paperback-cli --encode -i FILE -o PAGE.bmp [options]\n"
- "       paperback-cli --decode -i SCAN.bmp [-i SCAN2.bmp ...] -o FILE\n"
- "       paperback-cli --decode -o FILE SCAN1.bmp SCAN2.bmp ...\n"
+ "       paperback-cli --decode -i SCAN.bmp [-i SCAN2.bmp ...] [-o FILE]\n"
+ "       paperback-cli --decode [-o FILE] SCAN1.bmp SCAN2.bmp ...\n"
  "  -p, --pages N         Read base_0001.bmp through base_NNNN.bmp\n"
  "  --expect HEX          Check the restored file against a SHA-256 digest\n"
- "  -f, --force           Accept damaged pages; save to -o with zero-filled gaps\n"
+ "  -f, --force           Accept damaged pages; save with zero-filled gaps\n"
  "  --paper NAME          A3, A4 (default), A5, A6, Letter, Legal, Tabloid\n"
  "  --paper-size WxHmm    Custom sheet size (also WxHin)\n"
  "  --landscape           Swap sheet dimensions\n"
@@ -62,7 +62,9 @@ static void help(void) {
  "  --quality-map         Print a decode map and dot width per scan\n"
  "  -h, --help            Help\n"
  "  -v, --version         Version\n"
- "Output uses the exact -o path; OUTPUT.map records gaps and integrity.\n"
+ "Without -o the file is restored in the current directory under the name the\n"
+ "page carries, and an existing file of that name is never overwritten. With -o\n"
+ "the path is used exactly. OUTPUT.map records gaps and integrity.\n"
  "Exit: 0 complete, 1 error, 2 damaged output saved. Print at actual size (100%).");
 }
 int main(int argc,char **argv) {
@@ -134,10 +136,10 @@ int main(int argc,char **argv) {
   }
  }
  while(optind<argc) inputs[count++]=argv[optind++];
- if(!mode || !count || !pb_outfile[0] || (pages && count!=1)) goto invalid;
+ if(!mode || !count || (pages && count!=1)) goto invalid;
  for(int i=0;i<count;i++) if(strlen(inputs[i])>=MAXPATH-32) goto invalid;
  if(mode=='e') {
-  if(count!=1 || pages || pb_force || pb_expect[0]) goto invalid;
+  if(count!=1 || pages || pb_force || pb_expect[0] || !pb_outfile[0]) goto invalid;
   if(landscape) {double t=pb_paperwidth;pb_paperwidth=pb_paperheight;pb_paperheight=t;}
   if(pb_paperwidth<=pb_margins[0]+pb_margins[1] || pb_paperheight<=pb_margins[2]+pb_margins[3]) goto invalid;
   if(!pb_resx) pb_resx=pb_resy=pb_dpi*3;
