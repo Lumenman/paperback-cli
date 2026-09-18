@@ -29,6 +29,7 @@ $(CORE): test_core.c $(filter-out $(SDIR)/main.c $(SDIR)/Decoder.c,$(SOURCES)) $
 
 test: $(EX) $(CORE)
 	$(PYTHON) test_cli.py ./$(EX)
+	$(PYTHON) experiments/grid_check.py ./$(EX) --check
 	./$(CORE)
 
 # Warnings are part of the build, not an optional extra: the four that were
@@ -38,6 +39,7 @@ test: $(EX) $(CORE)
 check: CFLAGS+=-Wall -Wextra -Werror
 check: clean $(EX) $(CORE)
 	$(PYTHON) test_cli.py ./$(EX)
+	$(PYTHON) experiments/grid_check.py ./$(EX) --check
 	./$(CORE)
 
 # Same tests under AddressSanitizer and UndefinedBehaviorSanitizer, which is
@@ -57,6 +59,7 @@ sanitize: CFLAGS=-O1 -g -std=gnu11 $(SANFLAGS) -fno-omit-frame-pointer
 sanitize: LDFLAGS+=$(SANFLAGS)
 sanitize: clean $(EX) $(CORE)
 	$(PYTHON) test_cli.py ./$(EX)
+	$(PYTHON) experiments/grid_check.py ./$(EX) --check
 	./$(CORE)
 
 clean:

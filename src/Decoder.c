@@ -291,7 +291,7 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
   t_procdata *pdata,int erasures) {
   int i,j,k,q,r,factor,lcorr,c,cmin,cmax,limit;
   int grid1[NDOT][NDOT],answer,bestanswer;
-  int m,n,e,best,margin[sizeof(t_data)],eras[ECC_SIZE];
+  int m,n,e,best,margin[sizeof(t_data)],eras[ECC_SIZE],used;
   uint32_t bitrow[NDOT];
   t_data raw;
   static int lastgood;
@@ -372,6 +372,7 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
       else
         memcpy(&pdata->uncorrected,result,sizeof(t_data));
       raw=*result;
+      used=0;
       answer=Decode8((uchar *)result,NULL,0,127);
       if (erasures && (answer<0 ||
         (ushort)(Crc16((uchar *)result,NDATA+4)^0x55AA)!=result->crc)) {
@@ -386,6 +387,7 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
           eras[e]=best+127;            // Decode8 counts in codeword positions
           margin[best]=MAXMARGIN; };
         *result=raw;
+        used=1;
         answer=Decode8((uchar *)result,eras,ECC_SIZE,127);
         if (answer>16) answer=16;      // Caller reads 17 and above as failure
       };
@@ -406,6 +408,9 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
           // Data recognized correctly, save orientation of actually processed
           // page and factoring.
           pdata->orientation=r;
+          // How the accepted candidate was reached, for callers that treat a
+          // block read with erasures as weaker evidence than an ordinary one.
+          pdata->usederasures=used;
           // Report success.
           if ((pdata->mode & M_BEST)==0) {
             lastgood=q;
@@ -487,6 +492,29 @@ static void Getgridposition(t_procdata *pdata) {
   pdata->step++;
 };
 
+// Keep the normal path exactly as it was. A failed localization gets up to
+// nine windows over the whole image instead: a sparse grid need not be near
+// the centre of the sheet, and whatever stole the contrast threshold - a black
+// header, a page edge, a stain - need not be near the grid.
+// ponytail: nine fixed windows, so an unreadable page pays for all nine -
+// 01.bmp went from 107 to 537 seconds. A time budget instead of a count is the
+// upgrade, once there is a scan that needs it read rather than refused faster.
+static int Retrygrid(t_procdata *pdata) {
+  if (pdata->gridtry>=9) return 0;
+  int attempt=pdata->gridtry+1,sizex=pdata->sizex,sizey=pdata->sizey,mode=pdata->mode;
+  uchar *data=pdata->data;
+  pdata->data=NULL;                    // Keep the input; discard only attempt buffers
+  Startbitmapdecoding(pdata,data,sizex,sizey);
+  pdata->mode=mode;
+  pdata->gridtry=attempt;
+  pdata->gridxmin=pdata->gridymin=0;
+  pdata->gridxmax=sizex;
+  pdata->gridymax=sizey;
+  pdata->step=3;
+  printf("Retrying grid search (%d/9)...\n",attempt);
+  return 1;
+}
+
 // Ink and paper levels over one area of the bitmap: the level not reached by 3%
 // of its pixels and the level exceeded by 3% of them. Rows are taken every
 // `step`, so a whole sheet costs no more to measure than a window of it.
@@ -530,6 +558,14 @@ static void Getgridintensity(t_procdata *pdata) {
   // Y=0 (searchx0,searchx1) and for X=0 (searchy0,searchy1).
   centerx=(pdata->gridxmin+pdata->gridxmax)/2;
   centery=(pdata->gridymin+pdata->gridymax)/2;
+  if (pdata->gridtry) {
+    // Centre, then edges, then corners: the order costs least on the pages
+    // that fail for the commonest reason, a band of text along one side.
+    static const int positions[9][2]={{1,1},{1,0},{1,2},{0,1},{2,1},{0,0},{2,0},{0,2},{2,2}};
+    int x=positions[pdata->gridtry-1][0],y=positions[pdata->gridtry-1][1];
+    centerx=x==1?sizex/2:x==0?min(NHYST/2,sizex/2):max(sizex-NHYST/2,sizex/2);
+    centery=y==1?sizey/2:y==0?min(NHYST/2,sizey/2):max(sizey-NHYST/2,sizey/2);
+  }
   searchx0=centerx-NHYST/2; if (searchx0<0) searchx0=0;
   searchx1=searchx0+NHYST; if (searchx1>sizex) searchx1=sizex;
   searchy0=centery-NHYST/2; if (searchy0<0) searchy0=0;
@@ -572,6 +608,7 @@ static void Getgridintensity(t_procdata *pdata) {
     if (rmax-rmin>2*(cmax-cmin)) {
       cmin=rmin; cmax=rmax; }; };
   if (cmax-cmin<1) {
+    if (Retrygrid(pdata)) return;
     Reporterror("No image");
     pdata->step=0;
     return; };
@@ -657,6 +694,7 @@ static void Getxangle(t_procdata *pdata) {
   };
   // Analyse and save results.
   if (maxweight==0.0 || bestxstep<NDOT) {
+    if (Retrygrid(pdata)) return;
     Reporterror("No grid");
     pdata->step=0;
     return; };
@@ -721,6 +759,7 @@ static void Getyangle(t_procdata *pdata) {
     bestystep<pdata->xstep*0.40 ||
     bestystep>pdata->xstep*2.50
   ) {
+    if (Retrygrid(pdata)) return;
     Reporterror("No grid");
     pdata->step=0;
     return; };
@@ -1171,6 +1210,10 @@ static void Decodenextblock(t_procdata *pdata) {
     // Error, block is unreadable.
     pdata->nbad++; }
   else if (result.addr==SUPERBLOCK) {
+    // A fallback window must be confirmed by a label read with ordinary RS.
+    // Erasures spend all the redundancy, so a label accepted only that way is
+    // the very thing extra attempts would otherwise multiply.
+    if (pdata->gridtry && pdata->usederasures) goto finish;
     // Superblock.
     pdata->superblock.addr=SUPERBLOCK;
     pdata->superblock.datasize=((t_superdata *)&result)->datasize;
@@ -1248,6 +1291,10 @@ static void Printqualitymap(t_procdata *pdata) {
 // to Preparefordecoding().
 static void Finishdecoding(t_procdata *pdata) {
   int i,fileindex;
+  // A single readable block already confirms the grid, even when the label is
+  // damaged; only a page that gave nothing at all is worth another window.
+  // Without that limit the two unreadable scans here run for minutes.
+  if (pdata->superblock.addr==0 && pdata->ngood==0 && Retrygrid(pdata)) return;
   if (pb_qualitymap)
     Printqualitymap(pdata);
   Printdotwidth();

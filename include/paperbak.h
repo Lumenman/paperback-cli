@@ -236,6 +236,8 @@ void   Printfile(const char *path, const char *bmp);
 #define M_BEST         0x00000001      // Search for best possible quality
 
 typedef struct t_procdata {            // Descriptor of processed data
+  int            gridtry;              // 0: original search, 1..9: fallback windows
+  int            usederasures;         // Last accepted block needed RS erasures
   int            step;                 // Next data processing step (0 - idle)
   int            mode;                 // Set of M_xxx
   uchar          *data;                // Pointer to bitmap
