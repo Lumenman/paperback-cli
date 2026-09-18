@@ -57,7 +57,8 @@ static void help(void) {
  "  --image-dpi N         Bitmap resolution, 80..2400; default 3 times --dpi\n"
  "  -d, --dpi N           Code dot density, 40..600; default 150\n"
  "  -s, --dotsize N       Dot width percent, 50..100; default 70\n"
- "  -r, --redundancy N    One recovery block per N data blocks, 2..10; default 5\n"
+ "  -r, --redundancy N    One recovery block per N data blocks, 2..10, or 0 for\n"
+ "                        none; default 5\n"
  "  -b, --border          Black outer border\n"
  "  --header              Print a text header and footer; costs grid rows\n"
  "  --quality-map         Print a decode map and dot width per scan\n"
@@ -96,7 +97,11 @@ int main(int argc,char **argv) {
    case 'f': pb_force=1; break;
    case 'd': pb_dpi=number(optarg,40,600); if(pb_dpi<0) goto invalid; break;
    case 's': pb_dotpercent=number(optarg,50,100); if(pb_dotpercent<0) goto invalid; break;
-   case 'r': pb_redundancy=number(optarg,2,10); if(pb_redundancy<0) goto invalid; break;
+   // 0 is no recovery blocks at all; 1 would be one per data block, which is
+   // a second copy of the sheet and not what anyone means by redundancy.
+   case 'r': pb_redundancy=number(optarg,0,10);
+    if(pb_redundancy<0 || pb_redundancy==1) goto invalid;
+    break;
    case 'b': pb_printborder=1; break;
    case 'n': break;
    case 'h': help(); free(inputs); return 0;

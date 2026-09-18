@@ -242,5 +242,31 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     assert 'names one path' in denied.stderr,denied.stderr
     denied=run('--decode','--expect',digest,rule,sheet2,code=1)
     assert 'one digest' in denied.stderr,denied.stderr
+    # -r 0 lays the page out with no recovery blocks at all: labels spread over
+    # the sheet and data everywhere else. It is the same format - a data block's
+    # address has always carried zero in its top nibble - so the decoder needs
+    # nothing new, it simply never has a group to repair.
+    big=root/'norec.bin';big.write_bytes(bytes(range(256))*700)
+    run('--encode','-i',big,'-o',root/'norec.bmp','--dpi',100,'-r',0)
+    none=sorted(root.glob('norec_*.bmp'))
+    run('--encode','-i',big,'-o',root/'withrec.bmp','--dpi',100,'-r',5)
+    five=sorted(root.glob('withrec_*.bmp'))
+    # Nothing is spent on parity, so the same bytes need fewer sheets.
+    assert len(none)<len(five),(len(none),len(five))
+    got=run('--decode','-o',output,*none)
+    assert output.read_bytes()==big.read_bytes()
+    assert '0 repaired' in got.stdout,got.stdout
+    # A page carries several labels, so losing the first one does not cost the
+    # page: wipe the corner where it sits and the page still names its file.
+    b,w,h,off,stride=bmp(none[0])
+    hurt=bytearray(b)
+    for y in range(h-300,h):            # the bitmap is bottom-up
+        hurt[off+y*stride:off+y*stride+900]=b'\xff'*900
+    wiped=root/'norec_wiped.bmp';wiped.write_bytes(hurt)
+    got=run('--decode','--force','-i',wiped,'-o',output,code=2)
+    assert 'Page label: norec.bin' in got.stdout,got.stdout
+    # 1 would be one recovery block per data block, which is a second copy of
+    # the sheet and not what anyone means by redundancy.
+    run('--encode','-i',big,'-o',root/'one.bmp','--dpi',100,'-r',1,code=1)
 print('All CLI checks passed')
 

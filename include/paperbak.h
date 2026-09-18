@@ -52,6 +52,12 @@
 #define MAINDX         800             // Max width of the main window, pixels
 #define MAINDY         600             // Max height of the main window, pixels
 
+// Labels on a page laid out without recovery blocks. The r>0 layout prints
+// redundancy+1 of them and then fills every leftover cell with more, and for
+// good reason: a page whose only label is unreadable is lost whole, whatever
+// else survives on it. Four spread over the sheet cost 0.2% of its cells.
+#define NSUPER         4
+
 #define TEXTLEN        256             // Maximal length of strings
 
 typedef unsigned char  uchar;

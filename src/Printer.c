@@ -482,7 +482,9 @@ static void Initializeprinting(t_printdata *print) {
   // recovery blocks should be placed into different columns.
   nx=(width-3-px-2*print->border)/(NDOT*dx+3*dx);
   ny=(height-py-2*print->border)/(NDOT*dy+3*dy);
-  if (nx<print->redundancy+1 || ny<3 || nx*ny<2*print->redundancy+2) {
+  if (print->redundancy==0
+    ? (nx<1 || ny<3 || nx*ny<NSUPER+1)
+    : (nx<print->redundancy+1 || ny<3 || nx*ny<2*print->redundancy+2)) {
     Reporterror("Printable area is too small, reduce borders or block size");
     Stopprinting(print);
     return; };
@@ -536,8 +538,11 @@ static void Initializeprinting(t_printdata *print) {
   // For each redundancy blocks, I create one recovery block. For each chain, I
   // create one superblock that contains file name and size, plus at least one
   // superblock at the end of the page.
-  print->pagesize=((nx*ny-print->redundancy-2)/(print->redundancy+1))*
-    print->redundancy*NDATA;
+  if (print->redundancy==0)
+    print->pagesize=(nx*ny-NSUPER)*NDATA;
+  else
+    print->pagesize=((nx*ny-print->redundancy-2)/(print->redundancy+1))*
+      print->redundancy*NDATA;
   print->superdata.pagesize=print->pagesize;
   if ((print->datasize+print->pagesize-1)/print->pagesize >
     (uint32_t)(print->topage-print->frompage)+1) {
@@ -614,7 +619,7 @@ static void Drawheadline(uchar *sheet,int stride,int sheetheight,int x0,int avai
 
 // Prints one complete page or saves one bitmap.
 static void Printnextpage(t_printdata *print) {
-  int dx,dy,px,py,nx,ny,width,height,border,redundancy,black;
+  int dx,dy,px,py,nx,ny,width,height,border,redundancy,black,ndata;
   int i,j,k,l,n,success,basex,nstring,npages,rot;
   char s[TEXTLEN],foot[TEXTLEN],ts[TEXTLEN/2];
   char drv[MAXDRIVE],dir[MAXDIR],nam[MAXFILE],ext[MAXEXT],path[MAXPATH+32];
@@ -656,10 +661,14 @@ static void Printnextpage(t_printdata *print) {
   // Check if we can reduce the vertical size of the table on the last page.
   // To assure reliable orientation, I request at least 3 rows.
   l=min(size-offset,pagesize);
-  n=(l+NDATA-1)/NDATA;                 // Number of pure data blocks on page
-  nstring=                             // Number of groups (length of string)
-    (n+redundancy-1)/redundancy;
-  n=(nstring+1)*(redundancy+1)+1;      // Total number of blocks to print
+  ndata=(l+NDATA-1)/NDATA;             // Number of pure data blocks on page
+  if (redundancy==0) {
+    nstring=0;
+    n=ndata+NSUPER; }                  // Total number of blocks to print
+  else {
+    nstring=                           // Number of groups (length of string)
+      (ndata+redundancy-1)/redundancy;
+    n=(nstring+1)*(redundancy+1)+1; }  // Total number of blocks to print
   n=max((n+nx-1)/nx,3);                // Number of rows (at least 3)
   if (ny>n) ny=n;
   height=ny*(NDOT+3)*dy+py+2*border;
@@ -708,6 +717,35 @@ static void Printnextpage(t_printdata *print) {
   // Update superblock.
   print->superdata.page=
     (ushort)(print->frompage+1);       // Page number is 1-based
+  // Without recovery blocks there are no strings to head, so the labels are
+  // spread down the page and the data fills what is left. A data block's
+  // address carries zero in its top nibble, which is what a data block has
+  // always carried, so the decoder needs nothing new for this: Finishpage
+  // simply never finds a group to repair.
+  if (redundancy==0) {
+    l=nx*ny/NSUPER;
+    if (l<1) l=1;
+    for (k=0,i=0,j=0; k<nx*ny; k++) {
+      if ((j<NSUPER && k%l==0) || i>=ndata) {
+        if (k%l==0) j++;
+        Drawblock(k,(t_data *)&print->superdata,
+            bits,width,height,border,nx,ny,dx,dy,px,py,black);
+        continue; };
+      block.addr=offset;
+      if (offset<size) {
+        n=size-offset;
+        if (n>NDATA) n=NDATA;
+        memcpy(block.data,print->buf+offset,n); }
+      else
+        n=0;
+      while (n<NDATA)
+        block.data[n++]=0;            // Bytes beyond the data are set to 0
+      Drawblock(k,&block,bits,width,height,border,nx,ny,dx,dy,px,py,black);
+      offset+=NDATA;
+      i++;
+    };
+  }
+  else {
   // First block in every string (including redundancy string) is a superblock.
   // To improve redundancy, I avoid placing blocks belonging to the same group
   // in the same column (consider damaged diode in laser printer).
@@ -767,6 +805,7 @@ static void Printnextpage(t_printdata *print) {
   for (k=(nstring+1)*(redundancy+1); k<nx*ny; k++) {
     Drawblock(k,(t_data *)&print->superdata,
         bits,width,height,border,nx,ny,dx,dy,px,py,black); 
+  };
   };
   // When printing to paper, print title at the top of the page and info text
   // at the bottom.
