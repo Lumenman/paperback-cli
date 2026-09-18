@@ -39,6 +39,23 @@ static void check_recognition_addresses(void) {
   }
 }
 
+static void check_retry_without_orientation(void) {
+  // End of a pass: the final position has no raster. An earlier failure only
+  // deserves a second pass when some accepted block supplied orientation.
+  for (int known=0;known<2;known++) for (int failed=0;failed<2;failed++) {
+    t_procdata state={0};uchar pixels[256],buffer[256];int x[16],y[16];
+    signed char quality=17;
+    memset(pixels,255,sizeof(pixels));
+    state.data=pixels;state.sizex=state.sizey=16;
+    state.buf1=buffer;state.bufx=x;state.bufy=y;
+    state.bufdx=state.bufdy=16;state.cmax=255;
+    state.nposx=state.nposy=1;state.qmap=&quality;
+    state.orientation=known?7:-1;state.nbad=failed;state.step=7;
+    Decodenextblock(&state);
+    assert(state.step==(known && failed?7:8));
+    assert(state.pass==(known && failed?1:0));
+  }
+}
 
 static void setup(const uchar *bytes,unsigned size) {
   Closefproc(0);
@@ -61,6 +78,7 @@ static void map_contains(const char *text) {
 }
 int main(void) {
   check_recognition_addresses();
+  check_retry_without_orientation();
   assert(strnicmp("aBc","ABC",64)==0);assert(strnicmp("abc","abd",3)<0);
   char a[64],b[64];memset(a,'a',64);memset(b,'a',64);b[63]='b';assert(strnicmp(a,b,64)<0);
   uchar original[512];for(int i=0;i<512;i++) original[i]=(uchar)i;

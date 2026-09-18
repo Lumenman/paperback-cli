@@ -1208,7 +1208,10 @@ finish:
     pdata->posx=0;
     pdata->posy++;
     if (pdata->posy>=pdata->nposy) {
-      if (pdata->pass==0 && pdata->nbad>0) {
+      // With no accepted block, orientation and neighbour anchors are still
+      // unknown. Repeating this same grid cannot add information, so finish
+      // the page instead of reading every position a second time.
+      if (pdata->pass==0 && pdata->nbad>0 && pdata->orientation>=0) {
         pdata->pass=1;                 // Retry the failed blocks
         pdata->posx=pdata->posy=0; }
       else
