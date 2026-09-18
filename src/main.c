@@ -105,7 +105,7 @@ int main(int argc,char **argv) {
    case 'b': pb_printborder=1; break;
    case 'n': break;
    case 'h': help(); free(inputs); return 0;
-   case 'v': puts("PaperBack CLI 1.3 (GPL); PaperBack by Oleh Yuschuk"); free(inputs); return 0;
+   case 'v': puts("PaperBack CLI 1.4 (GPL); PaperBack by Oleh Yuschuk"); free(inputs); return 0;
    case IMAGE_DPI: pb_resx=pb_resy=number(optarg,80,2400); if(pb_resx<0) goto invalid; break;
    case HEADER: pb_printheader=1; break;
    case QMAP: pb_qualitymap=1; break;
