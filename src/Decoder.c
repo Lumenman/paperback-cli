@@ -289,7 +289,7 @@ static void Printdotwidth(void) {
 // Given grid of recognized dots, extracts saved information. Returns number of
 // corrected erorrs (0..16) on success and 17 if information is not readable.
 static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
-  t_procdata *pdata) {
+  t_procdata *pdata,int erasures) {
   int i,j,k,q,r,factor,lcorr,c,cmin,cmax,limit;
   int grid1[NDOT][NDOT],answer,bestanswer;
   int m,n,e,best,margin[sizeof(t_data)],eras[ECC_SIZE];
@@ -374,8 +374,8 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
         memcpy(&pdata->uncorrected,result,sizeof(t_data));
       raw=*result;
       answer=Decode8((uchar *)result,NULL,0,127);
-      if (answer<0 ||
-        (ushort)(Crc16((uchar *)result,NDATA+4)^0x55AA)!=result->crc) {
+      if (erasures && (answer<0 ||
+        (ushort)(Crc16((uchar *)result,NDATA+4)^0x55AA)!=result->crc)) {
         // Decoding failed. Reed-Solomon corrects 32 bytes of known position
         // against only 16 of unknown position, so retry with the 32 least
         // reliable bytes declared erasures. Their contents are ignored, and
@@ -1029,7 +1029,15 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
     // and the PSF measured on paper scaled 1.5x, one page read 6 blocks of 445
     // this way and all 445 that way (experiments/NOTES.md 8).
     for (i=0; i<9; i++) {
-      answer=Recognizebits(result,g[shiftorder[i]],pdata);
+      // Erasures only on the unshifted grid, where 1.20 had them. Declaring
+      // the 32 least reliable bytes erasures spends ALL the Reed-Solomon
+      // redundancy: whatever the other 95 bytes say is then a valid codeword,
+      // and only the 16-bit CRC stands between a fabricated block and the
+      // file. One in 65536 attempts gets through, so the number of attempts
+      // is the exposure - and trying the shifted grids that way as well
+      // multiplied it ninefold. On the three sheets of NOTES.md 12 that was
+      // enough to accept one wrong block in 910.
+      answer=Recognizebits(result,g[shiftorder[i]],pdata,shiftorder[i]==4);
       // Don't stop if in search-for-the-best-quality mode.
       if ((pdata->mode & M_BEST)!=0 && answer<bestanswer) {
         bestanswer=answer;
@@ -1077,7 +1085,7 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
         };
       };
       // Try to recognize data in the combined grid.
-      answer=Recognizebits(result,grid,pdata);
+      answer=Recognizebits(result,grid,pdata,1);
       // Again, don't stop if in search-for-the-best-quality mode.
       if ((pdata->mode & M_BEST)!=0 && answer<bestanswer) {
         bestanswer=answer;
