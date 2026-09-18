@@ -1,0 +1,9 @@
+# The harness and the journal are kept; the material they were run on is not.
+# Scans are tens of megabytes each, and the sources beside them belong to other
+# projects (PaperBack 1.20, paper-sound) and are read here, not maintained here.
+*
+!.gitignore
+!NOTES.md
+!scan.py
+!warp.py
+!mtf_check.py
