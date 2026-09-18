@@ -684,6 +684,7 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
   float xpeak,xstep,ypeak,ystep,halfdot,predx,predy;
   float sy,syy,disp,dispmin,dispmax;
   uchar *psrc,*pdest,*data,g[9][NDOT][NDOT],grid[NDOT][NDOT];
+  static const int shiftorder[9]={4,1,3,5,7,0,2,6,8};
   t_data uncorrected,bestresult;
   // Get frequently used variables.
   sizex=pdata->sizex;
@@ -832,14 +833,22 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
       };
     };
     // We have gathered 9 grids with 1-pixel shifts. Non-shifted grid is the
-    // most probable good candidate, try it first.
-    answer=Recognizebits(result,g[4],pdata);
-    // Don't stop if in search-for-the-best-quality mode.
-    if ((pdata->mode & M_BEST)!=0 && answer<bestanswer) {
-      bestanswer=answer;
-      bestresult=*result;
-      uncorrected=pdata->uncorrected;
-      if (answer!=0) answer=17; };
+    // most probable good candidate, try it first, then the four along the axes
+    // and last the diagonals. 1.20 tried only the non-shifted one and kept the
+    // rest for the recombined grid below, but each of them is also the whole
+    // block read one pixel over, which is what a page with few pixels per dot
+    // needs when the grid's phase lands between two of them: at 2 px per dot
+    // and the PSF measured on paper scaled 1.5x, one page read 6 blocks of 445
+    // this way and all 445 that way (experiments/NOTES.md 8).
+    for (i=0; i<9; i++) {
+      answer=Recognizebits(result,g[shiftorder[i]],pdata);
+      // Don't stop if in search-for-the-best-quality mode.
+      if ((pdata->mode & M_BEST)!=0 && answer<bestanswer) {
+        bestanswer=answer;
+        bestresult=*result;
+        uncorrected=pdata->uncorrected;
+        if (answer!=0) answer=17; };
+      if (answer!=17) break; };
     // If data recognition fails, combine grid from subblocks SUBDX*SUBDY dots
     // with maximal dispersion. This compensates for small distortions, even
     // nonlinear, and partially for bidirectional print.
