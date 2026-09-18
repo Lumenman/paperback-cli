@@ -480,24 +480,22 @@ static void Getgridposition(t_procdata *pdata) {
 };
 
 // Ink and paper levels over one area of the bitmap: the level not reached by 3%
-// of its pixels and the level exceeded by 3% of them, plus the mean. Rows are
-// taken every `step`, so a whole sheet costs no more to measure than a window
-// of it.
+// of its pixels and the level exceeded by 3% of them. Rows are taken every
+// `step`, so a whole sheet costs no more to measure than a window of it.
 static void Getlevels(t_procdata *pdata,int x0,int x1,int y0,int y1,int step,
-  int *cmin,int *cmax,int *cmean) {
+  int *cmin,int *cmax) {
   int i,j,n,sum,limit,distr[256];
   uchar *pd;
   memset(distr,0,sizeof(distr));
   for (j=y0,n=0,sum=0; j<y1; j+=step) {
     pd=pdata->data+j*pdata->sizex+x0;
     for (i=x0; i<x1; i++,pd++) {
-      distr[*pd]++; sum+=*pd; n++;
+      distr[*pd]++; n++;
     };
   };
   if (n<=0) {
-    *cmin=*cmax=*cmean=0;
+    *cmin=*cmax=0;
     return; };
-  *cmean=sum/n;
   limit=n/33;                          // 3% of the total number of pixels
   for (i=0,sum=0; i<255; i++) {
     sum+=distr[i];
@@ -513,7 +511,7 @@ static void Getlevels(t_procdata *pdata,int x0,int x1,int y0,int y1,int step,
 static void Getgridintensity(t_procdata *pdata) {
   int i,j,sizex,sizey,centerx,centery,dx,dy,nd,x0,x1,y0,y1,step;
   int searchx0,searchy0,searchx1,searchy1;
-  int distrd[256],cmean,cmin,cmax,rmin,rmax,rmean,limit,sum,contrast;
+  int distrd[256],cmin,cmax,rmin,rmax,limit,sum,contrast;
   uchar *data,*pd;
   // Get frequently used variables.
   sizex=pdata->sizex;
@@ -544,7 +542,7 @@ static void Getgridintensity(t_procdata *pdata) {
   // Levels of ink and paper, from the window as 1.20 took them. As a minimum I
   // take the level not reached by 3% of all pixels, as a maximum - the level
   // exceeded by 3% of them.
-  Getlevels(pdata,searchx0,searchx1,searchy0,searchy1,1,&cmin,&cmax,&cmean);
+  Getlevels(pdata,searchx0,searchx1,searchy0,searchy1,1,&cmin,&cmax);
   // But a sheet can carry a sticker, a coffee ring or a white crease exactly
   // where that window falls. 1.20 then measures cmin==cmax inside it and throws
   // the whole page away with "No image" although the other 95% of it is clean.
@@ -562,9 +560,9 @@ static void Getgridintensity(t_procdata *pdata) {
   y0=pdata->gridymin; y1=pdata->gridymax;
   step=(y1-y0)/NHYST+1;
   if (x1-x0>=dx && y1-y0>=dy) {
-    Getlevels(pdata,x0,x1,y0,y1,step,&rmin,&rmax,&rmean);
+    Getlevels(pdata,x0,x1,y0,y1,step,&rmin,&rmax);
     if (rmax-rmin>2*(cmax-cmin)) {
-      cmin=rmin; cmax=rmax; cmean=rmean; }; };
+      cmin=rmin; cmax=rmax; }; };
   if (cmax-cmin<1) {
     Reporterror("No image");
     pdata->step=0;
@@ -581,7 +579,6 @@ static void Getgridintensity(t_procdata *pdata) {
   pdata->searchx1=searchx1;
   pdata->searchy0=searchy0;
   pdata->searchy1=searchy1;
-  pdata->cmean=cmean;
   pdata->cmin=cmin;
   pdata->cmax=cmax;
   // Step finished.

@@ -236,7 +236,6 @@ typedef struct t_procdata {            // Descriptor of processed data
   int            gridymin,gridymax;    // Rought Y grid limits, pixels
   int            searchx0,searchx1;    // X grid search limits, pixels
   int            searchy0,searchy1;    // Y grid search limits, pixels
-  int            cmean;                // Mean grid intensity (0..255)
   int            cmin,cmax;            // Minimal and maximal grid intensity
   float          sharpfactor;          // Estimated sharpness correction factor
   float          xpeak;                // Base X grid line, pixels
