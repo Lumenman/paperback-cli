@@ -23,6 +23,10 @@
 
 void Reporterror(const char *input) 
 {
+  // stdout is buffered and stderr is not, so without this an error surfaces
+  // above the lines it belongs under - in a redirected run it lands at the
+  // very top, reading as though it happened before the work it interrupted.
+  fflush(stdout);
   fprintf(stderr,"%s\n", input);
   pb_errors++;
 }

@@ -210,7 +210,7 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     assert (here/'label.dat.map').exists()
     assert 'Saved label.dat' in got.stdout,got.stdout
     again=run('--decode','-i',rule,cwd=here,code=1)
-    assert 'Refusing to overwrite' in again.stderr,again.stderr
+    assert again.stderr.startswith('label.dat is already here'),again.stderr
     assert (here/'label.dat').read_bytes()==original
     # -o still wins and still overwrites the path the caller named.
     run('--decode','-i',rule,'-o',output);assert output.read_bytes()==original

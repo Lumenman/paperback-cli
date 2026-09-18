@@ -298,15 +298,13 @@ int Finishpage(int slot,int ngood,int nbad,uint32_t nrestored) {
   if (nrempages<8)
     pf->rempages[nrempages]=0;
   //Updatefileinfo(slot,pf);
-  if (pf->ndata==pf->nblock) {
-    if (pb_autosave==0) {
-      Message("File restored.",0);
-    }
-    else {
-      Message("File complete",0);
-      Saverestoredfile(slot,0);
-    };
-  };
+  // "File restored." used to be printed here, once per page that completed the
+  // file, before anything had been written - and it read as success even when
+  // the save was then refused. What it actually meant, that every block is in,
+  // the summary says once and at the right time.
+  if (pf->ndata==pf->nblock && pb_autosave!=0) {
+    Message("File complete",0);
+    Saverestoredfile(slot,0); };
   return pf->ndata==pf->nblock ? 0 : (nrempages ? nrempages : 1);
 };
 
@@ -377,7 +375,7 @@ int Saverestoredfile(int slot,int force) {
   uchar *data=pf->data;
   uint32_t length=pf->origsize;
   const char *path=pb_outfile;
-  char mapname[MAXPATH+8],chosen[MAXPATH];
+  char mapname[MAXPATH+8],chosen[MAXPATH],note[MAXPATH+64];
   FILE *exists;
   // With no -o, the page says what the file was called. Its label is printed
   // when the page is read either way, so what lands on disk is never a surprise.
@@ -392,7 +390,9 @@ int Saverestoredfile(int slot,int force) {
     exists=fopen(path,"rb");
     if (exists!=NULL) {
       fclose(exists);
-      Reporterror("Refusing to overwrite an existing file; pass -o");
+      snprintf(note,sizeof(note),
+        "%s is already here; pass -o to restore it somewhere else",path);
+      Reporterror(note);
       return -1; }; };
   // This clears pf->data in place, including the parity written into gaps by
   // Addblock, so it is only safe because the CLI saves once after every scan.
