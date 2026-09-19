@@ -142,25 +142,53 @@ def samplexy(img, X, Y, w, h):
     return sum(img[yi + dy, xi + dx] for dy in range(h) for dx in range(w)) / (w * h)
 
 
-def localshifts(src, aligned, gx, gy, cell, tile):
-    """One residual shift per tile of `tile` cells. A single affine cannot follow
-    paper: the sheet stretches unevenly through the printer and again on the
-    glass, and half a cell of leftover drift reads the neighbouring dot. The
-    decoder answers this by locating every block; here a tile does the same job
-    over a block-sized piece of the page."""
-    half = int(tile * cell / 2)
-    ny, nx = -(-len(gy) // tile), -(-len(gx) // tile)
-    SX, SY = np.zeros((ny, nx)), np.zeros((ny, nx))
-    for j in range(ny):
-        for i in range(nx):
-            cx = int(gx[min(i * tile + tile // 2, len(gx) - 1)])
-            cy = int(gy[min(j * tile + tile // 2, len(gy) - 1)])
-            cx = int(np.clip(cx, half, src.shape[1] - half - 1))
-            cy = int(np.clip(cy, half, src.shape[0] - half - 1))
-            fx, fy = locate(src, aligned, cx, cy, cx, cy, half=half, win=2 * half)
-            SX[j, i], SY[j, i] = fx - cx, fy - cy
-    return (np.repeat(np.repeat(SX, tile, 0), tile, 1)[:len(gy), :len(gx)],
-            np.repeat(np.repeat(SY, tile, 0), tile, 1)[:len(gy), :len(gx)])
+def tilesums(v, tile):
+    """Sum of v over each tile of `tile` x `tile` cells, ragged edges included."""
+    rows = np.add.reduceat(v, np.arange(0, v.shape[0], tile), axis=0)
+    return np.add.reduceat(rows, np.arange(0, v.shape[1], tile), axis=1)
+
+
+def localshifts(aligned, X, Y, ink, wx, wy, tile, reach=6, limit=None):
+    """One shift per tile of `tile` cells, the one that separates ink from paper
+    best over that tile.
+
+    A single affine cannot follow paper: the sheet stretches unevenly through the
+    printer and again on the glass, and half a cell of leftover drift reads the
+    neighbouring dot. The decoder answers this by locating every block; a tile
+    does the same job over a block-sized piece of the page.
+
+    The shift is chosen against the known ink, not by correlating the two images:
+    after the affine the residual is a couple of pixels, and inside so small a
+    window a raster of identical dots correlates about as well one cell over as
+    in the right place. What is being measured is how far apart the two
+    populations of cells can be pulled, so that is what the first pass
+    maximises. Given a threshold, the second pass minimises the thing actually
+    being reported instead: how many cells of the tile disagree with the ink.
+    Both use the known source, which is the point of a known source; what comes
+    out is what the paper kept when the geometry is right, an upper bound on the
+    dots and a lower bound on what a decoder could still lose."""
+    n = tilesums(np.ones_like(ink, dtype=float), tile)
+    k = tilesums(ink.astype(float), tile)
+    best = np.full(k.shape, -1e30)
+    SX, SY = np.zeros(k.shape), np.zeros(k.shape)
+    for dy in range(-reach, reach + 1):
+        for dx in range(-reach, reach + 1):
+            got = samplexy(aligned, X + dx, Y + dy, wx, wy)
+            if limit is None:
+                dark = tilesums(np.where(ink, got, 0.0), tile)
+                light = tilesums(np.where(ink, 0.0, got), tile)
+                with np.errstate(invalid='ignore', divide='ignore'):
+                    sep = light / np.maximum(n - k, 1) - dark / np.maximum(k, 1)
+            else:
+                sep = -tilesums(((got < limit) != ink).astype(float), tile)
+            take = sep > best
+            best, SX, SY = np.where(take, sep, best), np.where(take, dx, SX),                 np.where(take, dy, SY)
+    edge = np.count_nonzero(np.maximum(np.abs(SX), np.abs(SY)) >= reach)
+    if edge:
+        print(f"  warning: {edge} of {SX.size} tiles want more than "
+              f"{reach} px of shift")
+    return (np.repeat(np.repeat(SX, tile, 0), tile, 1)[:ink.shape[0], :ink.shape[1]],
+            np.repeat(np.repeat(SY, tile, 0), tile, 1)[:ink.shape[0], :ink.shape[1]])
 
 
 def report(source, scanfile, cell, tile=32):
@@ -169,10 +197,17 @@ def report(source, scanfile, cell, tile=32):
     M, resid = fit(src, scan, box, sbox)
     aligned = warp(scan, np.linalg.inv(square(M))[:2])   # the scan in sheet geometry
     gx, gy, wx, wy = lattice(src, cell, box)
+    # Whole tiles only. A ragged tile a few cells wide has too little ink to
+    # choose its own shift, picks a wrong one, and every cell in it reads wrong -
+    # which is a lot of noise to carry for the outermost 2% of the raster.
+    gx, gy = gx[:len(gx) // tile * tile], gy[:len(gy) // tile * tile]
     X, Y = np.meshgrid(gx, gy)
-    SX, SY = localshifts(src, aligned, gx, gy, cell, tile)
     ink = samplexy(src, X, Y, wx, wy) < 128          # what was printed
+    SX, SY = localshifts(aligned, X, Y, ink, wx, wy, tile)
     got = samplexy(aligned, X + SX, Y + SY, wx, wy)  # what came back
+    _, first = min((np.count_nonzero((got < v) != ink), v) for v in range(20, 250, 2))
+    SX, SY = localshifts(aligned, X, Y, ink, wx, wy, tile, limit=first)
+    got = samplexy(aligned, X + SX, Y + SY, wx, wy)
     print(f"{source} -> {scanfile}")
     print(f"  raster {box[2]-box[0]+1}x{box[3]-box[1]+1} px on the sheet, "
           f"{sbox[2]-sbox[0]+1}x{sbox[3]-sbox[1]+1} px on the scan")
