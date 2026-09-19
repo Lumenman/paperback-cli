@@ -430,9 +430,39 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
 };
 
 // Determines rough grid position.
+// Samples of the profile that may fall below the threshold without ending a
+// stretch. At most 256 samples are taken per axis, which against a cell of a
+// few pixels aliases: consecutive samples land on a row of dots and then
+// between two rows, so a raster shows up as a dotted line rather than a solid
+// one. Measured over the fixtures of experiments/grid_check.py, gaps inside a
+// raster reach 6 samples while the nearest band of text sits at least 112
+// away, so anything between those two numbers separates them.
+#define GRIDGAP        16
+
+// Rough limits of the raster along one axis: the widest stretch of the
+// contrast profile that stays above half its maximum, gaps above allowed.
+// Taking the first and last sample above the threshold instead treats two
+// separate high-contrast regions - a band of text and the grid - as one, and
+// Getgridintensity then centres its search window on the white gap between
+// them and finds no raster to measure. Both regions pass the threshold on a
+// printed header, so no choice of threshold separates them; only their shape
+// does, a raster being long and a line of text short (experiments/NOTES.md 18).
+static void Widestrun(const int *distr,int n,int step,int *lo,int *hi) {
+  int i,limit=0,start=-1,last=-1,bestlo=0,besthi=0;
+  for (i=0; i<n; i++) {
+    if (distr[i]>limit) limit=distr[i]; };
+  limit/=2;
+  for (i=0; i<n; i++) {
+    if (distr[i]<limit) continue;
+    if (start<0 || i-last>GRIDGAP) start=i; // Too far to be the same stretch
+    last=i;
+    if (last-start>besthi-bestlo) {bestlo=start;besthi=last;}; };
+  *lo=bestlo*step; *hi=besthi*step;
+}
+
 static void Getgridposition(t_procdata *pdata) {
   int i,j,nx,ny,stepx,stepy,sizex,sizey;
-  int c,cmin,cmax,distrx[256],distry[256],limit;
+  int c,cmin,cmax,distrx[256],distry[256];
   uchar *data,*pd;
   // Get frequently used variables.
   sizex=pdata->sizex;
@@ -465,29 +495,9 @@ static void Getgridposition(t_procdata *pdata) {
       distry[j]+=cmax-cmin;
     };
   };
-  // Get rough bitmap limits in horizontal direction (at the level 50% of
-  // maximum).
-  limit=0;
-  for (i=0; i<nx; i++) {
-    if (distrx[i]>limit) limit=distrx[i]; };
-  limit/=2;
-  for (i=0; i<nx-1; i++) {
-    if (distrx[i]>=limit) break; };
-  pdata->gridxmin=i*stepx;
-  for (i=nx-1; i>0; i--) {
-    if (distrx[i]>=limit) break; };
-  pdata->gridxmax=i*stepx;
-  // Get rough bitmap limits in vertical direction.
-  limit=0;
-  for (j=0; j<ny; j++) {
-    if (distry[j]>limit) limit=distry[j]; };
-  limit/=2;
-  for (j=0; j<ny-1; j++) {
-    if (distry[j]>=limit) break; };
-  pdata->gridymin=j*stepy;
-  for (j=ny-1; j>0; j--) {
-    if (distry[j]>=limit) break; };
-  pdata->gridymax=j*stepy;
+  // Rough limits of the raster in each direction.
+  Widestrun(distrx,nx,stepx,&pdata->gridxmin,&pdata->gridxmax);
+  Widestrun(distry,ny,stepy,&pdata->gridymin,&pdata->gridymax);
   // Step finished.
   pdata->step++;
 };
