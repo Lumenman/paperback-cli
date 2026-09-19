@@ -9,7 +9,7 @@ each scan must be saved under beside the sheets themselves.
     python experiments/print_set.py --verify   # re-check hashes of what is there
 
 Sheets land in experiments/print-set/, which is ignored by git like the rest of
-the material. Scans go back into experiments/print-set/scans/ under the names
+the material. Scans go back into experiments/print-set/<round>/ under the names
 the manifest gives.
 """
 from pathlib import Path
@@ -21,28 +21,36 @@ EXE = ROOT / ('paperback-cli.exe' if sys.platform == 'win32' else 'paperback-cli
 PRINT_DPI = 600                   # the image is rendered at the printer's resolution
 INPUT_BYTES = 20000               # fits one sheet at every density below
 INPUT_MTIME = 1757000000          # pinned: the sheet carries the input's mtime
+# One folder per print run. Two rounds of the same sheets under one name would
+# overwrite each other, and a scan whose round is unknown is the provenance
+# problem this whole set exists to avoid.
+SCANS = 'scans3'                  # round 1 'scans', round 2 'scans2'
 
 # Each sheet answers one question. Keep the list short enough to actually print.
 SHEETS = [
     ('01-d100-s70', ['-d', '100'],
-     'Baseline. Must read. Gives the reference dot shape on this paper.'),
+     'Reference. Read in both earlier rounds, so it says what this paper and '
+     'this toner do on a sheet that is never in doubt.'),
     ('02-d150-s70', ['-d', '150'],
-     'The default. The sheet to scan twice, at 600 and at 300 dpi.'),
-    ('03-d150-s70-header', ['-d', '150', '--header'],
-     'The gray header and the footer under the grid, on paper for the first '
-     'time: NOTES 16.1 only ever measured them on digital images.'),
+     'The default, and the working point since the printer sharpens (NOTES 21). '
+     'Scanned twice, at 600 and at 300 dpi: at 300 it read 146 blocks of 223, '
+     'so that is where the margin can be seen shrinking.'),
+    ('03-d150-s100', ['-d', '150', '-s', '100'],
+     'The dot fills its cell: no gap between dots at all. NOTES 14 reasoned '
+     'from the gap closing, NOTES 21.3 found darkness decides and the gap does '
+     'not. If 21.3 is right this is the best sheet of the set, and if it is '
+     'wrong this is the worst.'),
     ('04-d120-s70', ['-d', '120'],
-     'Between the density that reads and the one that does not. At 600 dpi a '
-     'cell is a whole number of pixels, so five pixels is the only step there '
-     'is between 100 and 150 (NOTES 20.6).'),
-    ('05-d200-s70', ['-d', '200'],
-     'NOTES 14 says this cannot work on this printer: 0.9 px of ink spread at '
-     '600 dpi closes the gap. The sheet that tests that claim.'),
+     'At 600 dpi a cell is a whole number of pixels, so five pixels is the only '
+     'density there is between 100 and 150.'),
+    ('05-d150-s50', ['-d', '150', '-s', '50'],
+     'The smallest dot at the working density. With 02 and 03 this makes three '
+     'points of one curve - two, three and four pixels of dot in the same four '
+     'pixel cell - instead of three anecdotes.'),
     ('06-d100-s50', ['-d', '100', '-s', '50'],
-     'The baseline density with the smallest dot the encoder allows. A cell of '
-     'six pixels is the narrowest one where -s still changes the dot, and the '
-     'density reads, so every wrong dot can be counted rather than guessed at. '
-     'If ink spread is the whole story, this one loses fewer dots than 01.'),
+     'The smallest dot at the density that always reads, where every wrong dot '
+     'can be counted. Separates dot size from density; against 01 it is the '
+     'same question as 05 against 02, one density lower.'),
 ]
 
 
@@ -59,7 +67,7 @@ def version():
 
 def build():
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / 'scans').mkdir(exist_ok=True)
+    (OUT / SCANS).mkdir(exist_ok=True)
     source = OUT / 'input.bin'
     # Seeded, so the same bytes can be regenerated if the file is ever lost.
     data = random.Random(20260919).randbytes(INPUT_BYTES)
@@ -139,7 +147,8 @@ def manifest(source, rows):
              'fine, the decoder measures it, but keep the whole sheet on the glass.',
              '', 'Scan `02-d150-s70` a **second** time at 300 dpi, to separate what the',
              'printer loses from what the scanner loses.', '',
-             'Save every scan in `experiments/print-set/scans/` under exactly the name in',
+             f'Save every scan in `experiments/print-set/{SCANS}/` under exactly the name',
+             'in',
              'the table. That name is the whole point of this set: it is what the old',
              'scans lack.', '', '## Sheets', '']
     for name, page, printed, why, out, trip in rows:
@@ -149,8 +158,9 @@ def manifest(source, rows):
                   f'- sheet image: `{name}.bmp`, SHA-256 `{sha256(page)}`']
         if geometry: lines.append(f'- {geometry}')
         lines.append(f'- decodes as generated: {trip}, byte for byte')
-        lines.append(f'- scan back as: `scans/{name}-600dpi.bmp`')
-        if name.startswith('02'): lines.append('- and also: `scans/02-d150-s70-300dpi.bmp`')
+        lines.append(f'- scan back as: `{SCANS}/{name}-600dpi.bmp`')
+        if name.startswith('02'):
+            lines.append(f'- and also: `{SCANS}/02-d150-s70-300dpi.bmp`')
         lines.append('')
     lines += ['## After scanning', '',
               'Every sheet holds the same known bytes, and for a sheet whose raster is',
@@ -173,7 +183,7 @@ def verify():
         path = OUT / name
         if not path.exists(): print(f'missing {name}'); missing += 1
         elif sha256(path) != want: print(f'CHANGED {name}'); bad += 1
-    scans = sorted((OUT / 'scans').glob('*.bmp'))
+    scans = sorted((OUT / SCANS).glob('*.bmp'))
     print(f'{len(SHEETS)} sheets, {missing} missing, {bad} changed; {len(scans)} scans present')
     for s in scans: print(f'  {s.name}  {sha256(s)[:16]}  {s.stat().st_size} bytes')
 
