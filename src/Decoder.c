@@ -289,6 +289,8 @@ static void Printdotwidth(void) {
 // corrected erorrs (0..16) on success and 17 if information is not readable.
 static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
   t_procdata *pdata,int erasures) {
+  static const int factors[3]={1000,32,16};
+  static const int offsets[5]={0,-1,1,2,3};
   int i,j,k,q,r,factor,lcorr,c,cmin,cmax,limit;
   int grid1[NDOT][NDOT],answer,bestanswer;
   int m,n,e,best,margin[sizeof(t_data)],eras[ECC_SIZE],used;
@@ -303,22 +305,21 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
   // If orientation is not yet known, try all possible orientations + mirroring.
   for (r=0; r<8; r++) {
     if (pdata->orientation>=0 && r!=pdata->orientation) continue;
-    // Try 3 different point overlapping factors, combined with 3 different
+    // Try 3 different point overlapping factors, combined with 5 different
     // thresholds. Usually all cells are alike, so I remember the last known
     // good combination and start with it.
-    for (k=0; k<9; k++) {
-      q=(k+lastgood)%9;
-      switch (q) {
-        case 0: factor=1000; lcorr=0; break;
-        case 1: factor=32; lcorr=0; break;
-        case 2: factor=16; lcorr=0; break;
-        case 3: factor=1000; lcorr=(cmin-cmax)/16; break;
-        case 4: factor=32; lcorr=(cmin-cmax)/16; break;
-        case 5: factor=16; lcorr=(cmin-cmax)/16; break;
-        case 6: factor=1000; lcorr=(cmax-cmin)/16; break;
-        case 7: factor=32; lcorr=(cmax-cmin)/16; break;
-        case 8: factor=16; lcorr=(cmax-cmin)/16; break;
-        default: factor=1000; lcorr=0; lastgood=0; break; };
+    // The offsets reach three times further toward the paper level than 1.20's
+    // did, because on paper that is where the best cut lies: bare cells cluster
+    // tightly just under cmax, while a printed dot comes back anywhere from
+    // black to nearly paper, so a limit near the middle of the two clusters
+    // slices through the light tail of the dots and calls them paper. Measured
+    // on a printed and scanned sheet (experiments/NOTES.md 20): at 100 dpi the
+    // mean-based limit reads ~13 dots per block wrong, +3/16 of the range
+    // reads ~1. Above +3/16 it turns over sharply, so the ladder stops there.
+    for (k=0; k<15; k++) {
+      q=(k+lastgood)%15;
+      factor=factors[q%3];
+      lcorr=offsets[q/3]*(cmax-cmin)/16;
       // Correct grid for overlapping dots and calculate limit between black
       // and white. I take into account only adjacent dots; the influence of
       // diagonals is significantly lower.

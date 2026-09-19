@@ -110,7 +110,11 @@ int main(int argc,char **argv) {
    case 'v': puts("PaperBack CLI 1.5 (GPL); PaperBack by Oleh Yuschuk"); free(inputs); return 0;
    case IMAGE_DPI: pb_resx=pb_resy=number(optarg,80,2400); if(pb_resx<0) goto invalid; break;
    case HEADER: pb_printheader=1; break;
-   case QMAP: pb_qualitymap=1; break;
+   // The map claims to print how many bytes each block's ECC had to repair.
+   // Without best-quality search the decoder stops at the first threshold
+   // combination that passes CRC, so the number it would print is that
+   // combination's, not the block's. Ask for the map, get the real count.
+   case QMAP: pb_qualitymap=pb_bestquality=1; break;
    case EXPECT: {
     size_t n=strlen(optarg); if(n!=SHA256_HEXLEN) goto invalid;
     for(size_t i=0;i<n;i++) {

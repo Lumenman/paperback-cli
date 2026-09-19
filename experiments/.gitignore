@@ -9,4 +9,5 @@
 !mtf_check.py
 !grid_check.py
 !grid_probe.py
+!dot_diff.py
 !print_set.py

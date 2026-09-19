@@ -13,13 +13,14 @@ the material. Scans go back into experiments/print-set/scans/ under the names
 the manifest gives.
 """
 from pathlib import Path
-import argparse, hashlib, random, subprocess, sys, tempfile
+import argparse, hashlib, os, random, subprocess, sys, tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / 'experiments' / 'print-set'
 EXE = ROOT / ('paperback-cli.exe' if sys.platform == 'win32' else 'paperback-cli')
 PRINT_DPI = 600                   # the image is rendered at the printer's resolution
 INPUT_BYTES = 20000               # fits one sheet at every density below
+INPUT_MTIME = 1757000000          # pinned: the sheet carries the input's mtime
 
 # Each sheet answers one question. Keep the list short enough to actually print.
 SHEETS = [
@@ -30,15 +31,18 @@ SHEETS = [
     ('03-d150-s70-header', ['-d', '150', '--header'],
      'The gray header and the footer under the grid, on paper for the first '
      'time: NOTES 16.1 only ever measured them on digital images.'),
-    ('04-d175-s60', ['-d', '175', '-s', '60'],
-     'Between the working density and the one NOTES 14 calls impossible, with '
-     'a smaller dot to widen the gap between dots.'),
+    ('04-d120-s70', ['-d', '120'],
+     'Between the density that reads and the one that does not. At 600 dpi a '
+     'cell is a whole number of pixels, so five pixels is the only step there '
+     'is between 100 and 150 (NOTES 20.6).'),
     ('05-d200-s70', ['-d', '200'],
      'NOTES 14 says this cannot work on this printer: 0.9 px of ink spread at '
      '600 dpi closes the gap. The sheet that tests that claim.'),
-    ('06-d200-s50', ['-d', '200', '-s', '50'],
-     'Same density, the smallest dot the encoder allows. If spread is the '
-     'whole story this one reads and 05 does not.'),
+    ('06-d100-s50', ['-d', '100', '-s', '50'],
+     'The baseline density with the smallest dot the encoder allows. A cell of '
+     'six pixels is the narrowest one where -s still changes the dot, and the '
+     'density reads, so every wrong dot can be counted rather than guessed at. '
+     'If ink spread is the whole story, this one loses fewer dots than 01.'),
 ]
 
 
@@ -58,7 +62,14 @@ def build():
     (OUT / 'scans').mkdir(exist_ok=True)
     source = OUT / 'input.bin'
     # Seeded, so the same bytes can be regenerated if the file is ever lost.
-    source.write_bytes(random.Random(20260919).randbytes(INPUT_BYTES))
+    data = random.Random(20260919).randbytes(INPUT_BYTES)
+    if not source.exists() or source.read_bytes() != data:
+        source.write_bytes(data)
+    # The superblock carries the input file's modification time, so a sheet
+    # built from the same bytes at a different minute is a different bitmap.
+    # Pinning the mtime makes the sheets reproducible byte for byte, which is
+    # what lets a scan be compared against the sheet that produced it.
+    os.utime(source, (INPUT_MTIME, INPUT_MTIME))
     rows = []
     for name, opts, why in SHEETS:
         page = OUT / (name + '.bmp')
@@ -74,6 +85,16 @@ def build():
                             '-o', page.name, '--image-dpi', str(PRINT_DPI), *opts])
         rows.append((name, page, printed, why, p.stdout.strip().splitlines(),
                      roundtrip(page, source)))
+    # Two sheets with the same SHA-256 are the same print, and the questions
+    # they were supposed to separate stay unanswered - at 600 dpi a cell must be
+    # a whole number of pixels, so -d 175 becomes 200 and every -s from 50 to 70
+    # gives the same two-pixel dot. Cheaper to notice here than after printing
+    # three copies of one sheet (NOTES.md 20.6).
+    same = {}
+    for name, page, *_ in rows:
+        same.setdefault(sha256(page), []).append(name)
+    twins = [v for v in same.values() if len(v) > 1]
+    assert not twins, f'identical sheets, differing only in the options asked for: {twins}'
     return source, rows
 
 
