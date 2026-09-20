@@ -48,7 +48,9 @@ def fixtures(root,exe):
         old_header(page,legacy);cases.append((paper,legacy,data))
         turn=root/(paper+'-turned.bmp');rotate(legacy,turn);cases.append((paper+'-180',turn,data))
     big=bytes(range(256))*156;source.write_bytes(big)
-    page=root/'dense.bmp';p=run(exe,'--encode','-i',source,'-o',page,'--dpi',100)
+    # -r 0 spelled out: the block counts below were measured on a sheet of pure
+    # data, and the default redundancy has moved once since (955e62c).
+    page=root/'dense.bmp';p=run(exe,'--encode','-i',source,'-o',page,'--dpi',100,'-r',0)
     assert p.returncode==0,p.stderr
     base,w,h,off,stride=bmp(page)
     cases.append(('dense',page,big))
