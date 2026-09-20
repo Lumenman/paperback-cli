@@ -62,7 +62,7 @@ static void help(void) {
  "  -b, --border          Black outer border\n"
  "  --header              Print a text header and footer; costs grid rows\n"
  "  -n, --no-header       Drop them again if something turned them on\n"
- "  --quality-map         Print a decode map and dot width per scan\n"
+ "  --quality-map         Print a decode map, dot width and ink levels per scan\n"
  "  -h, --help            Help\n"
  "  -v, --version         Version\n"
  "Without -o the file is restored in the current directory under the name the\n"
