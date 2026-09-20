@@ -265,8 +265,19 @@ static float Dotwidth(void) {
 
 // Reports the ruler: what it measured, and what it means if the dot came back
 // narrower than the printer drew it.
-static void Printdotwidth(void) {
+static void Printdotwidth(t_procdata *pdata) {
   float width;
+  // Width is measured at half the dot's own depth, so it says nothing about how
+  // deep that is, and depth is what cost the sheets of NOTES.md 21.3 and 22.3.
+  // These levels are already to hand, so reporting them is free - but they are
+  // the 3% tails over the whole sheet, the darkest cores against the cleanest
+  // paper, and NOTES 22.9 found those barely move while a sheet goes from 223
+  // blocks to 141. They catch a washed-out scan, not a marginal one. Reported,
+  // never judged: the number that does rank sheets is the mean over the dot
+  // aperture, and the decoder has no source image to measure it against.
+  if (pb_qualitymap)
+    printf("Ink %d, paper %d, separation %d (3%% tails over the sheet)\n",
+      pdata->cmin,pdata->cmax,pdata->cmax-pdata->cmin);
   width=Dotwidth();
   if (width<=0.0) {
     if (pb_qualitymap)
@@ -1308,7 +1319,7 @@ static void Finishdecoding(t_procdata *pdata) {
   if (pdata->superblock.addr==0 && pdata->ngood==0 && Retrygrid(pdata)) return;
   if (pb_qualitymap)
     Printqualitymap(pdata);
-  Printdotwidth();
+  Printdotwidth(pdata);
   // Pass gathered data to file processor.
   if (pdata->superblock.addr==0)
     Reporterror("Page label is not readable");
