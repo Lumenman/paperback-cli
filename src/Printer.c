@@ -168,8 +168,8 @@ void Stopprinting(t_printdata *print) {
 // Opens input file and allocates memory buffers.
 static void Preparefiletoprint(t_printdata *print)
 {
-  uint32_t l;
 #if defined(_WIN32) || defined(__CYGWIN__)
+  uint32_t l;                          // Only the Windows size call has a high half
   FILETIME created,accessed,modified;
   // Get file attributes.
   print->attributes=GetFileAttributes(print->infile);
