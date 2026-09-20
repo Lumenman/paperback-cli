@@ -382,6 +382,16 @@ static FILE *Createfile(const char *path,const char *mode,int exclusive) {
   return f;
 }
 
+// True when every block holding [from,to) has been read. The bytes written
+// and the digest that checks them live in different parts of the stored
+// data, so they have to be asked about separately.
+static int Rangeread(t_fproc *pf,uint32_t from,uint32_t to) {
+  if (to<=from) return 0;
+  for (uint32_t i=from/NDATA; i<=(to-1)/NDATA; i++) {
+    if (i>=(uint32_t)pf->nblock || pf->datavalid[i]!=1) return 0; };
+  return 1;
+}
+
 // Saves accumulated data after all scans. Returns 0 for complete output,
 // 2 for partial output, and -1 on error. The caller owns the descriptor.
 int Saverestoredfile(int slot,int force) {
@@ -391,8 +401,13 @@ int Saverestoredfile(int slot,int force) {
      pf->origsize>pf->datasize || pf->datasize>(size_t)pf->nblock*NDATA) {
     Reporterror("Unsupported or invalid file metadata"); return -1;
   }
-  int incomplete=pf->ndata!=pf->nblock;
-  int badcrc=!incomplete && Crc16(pf->data,pf->datasize)!=pf->filecrc;
+  // A block lying entirely past origsize holds padding and the page's own
+  // digest. Losing one costs the check, not the file: what gets written is
+  // the first origsize bytes, and those are all here. Calling that a damaged
+  // restore was a false alarm even before the digest existed.
+  int allblocks=pf->ndata==pf->nblock;
+  int incomplete=!Rangeread(pf,0,pf->origsize);
+  int badcrc=allblocks && Crc16(pf->data,pf->datasize)!=pf->filecrc;
   int partial=incomplete || badcrc;
   if(partial && !force) {
     Reporterror(incomplete?"Incomplete file":"File checksum mismatch"); return -1;
@@ -482,8 +497,17 @@ int Saverestoredfile(int slot,int force) {
   // the same damaged page apart.
   int mismatch=0;
   {
-    char got[SHA256_HEXLEN+1];
+    char got[SHA256_HEXLEN+1],carried[SHA256_HEXLEN+1];
+    // A page written since 1.7 keeps its own digest in the last 32 bytes of
+    // the stored data, and the gap past origsize gives it away: padding alone
+    // never reaches 32. So the restore is checked with nothing kept on the
+    // side, and unlike the 16-bit file checksum the answer is proof.
+    int hasdigest=pf->datasize>=pf->origsize+SHA256_SIZE &&
+      Rangeread(pf,pf->datasize-SHA256_SIZE,pf->datasize);
     Sha256hex(data,length,got);
+    if(hasdigest) {
+      for(int i=0;i<SHA256_SIZE;i++)
+        sprintf(carried+2*i,"%02x",pf->data[pf->datasize-SHA256_SIZE+i]); }
     if(pb_expect[0]) {
       mismatch=strcmp(got,pb_expect)!=0;
       if(mismatch)
@@ -493,11 +517,22 @@ int Saverestoredfile(int slot,int force) {
     }
     else if(partial)
       printf("SHA-256 %s (of the damaged output, gaps zero-filled)\n",got);
+    else if(hasdigest && strcmp(got,carried)==0)
+      printf("SHA-256 %s, matching the digest the page carries\n",got);
+    else if(pf->datasize>=pf->origsize+SHA256_SIZE)
+      printf("SHA-256 %s (the page carries a digest, but the block holding "
+        "it was not recovered)\n",got);
     else
       printf("SHA-256 %s\n",got);
+    // Gaps are zeros, so a damaged restore cannot match and is not accused.
+    if(!partial && hasdigest && strcmp(got,carried)!=0) {
+      fprintf(stderr,"SHA-256 of the restored file is %s, but the page "
+        "carries %s\n",got,carried);
+      mismatch=1; }
   }
   printf("Saved %s%s\n",path,mismatch?" (HASH MISMATCH)":partial?" (DAMAGED)":"");
-  if(mismatch) {Reporterror("Restored file does not match --expect");return -1;}
+  if(mismatch) {Reporterror(pb_expect[0]?"Restored file does not match --expect":
+    "Restored file does not match the digest on the page");return -1;}
   return partial?2:0;
 failed:
   return -1;

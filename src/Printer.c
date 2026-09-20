@@ -238,7 +238,9 @@ static void Preparefiletoprint(t_printdata *print)
 
   print->readsize=0;
   // Keep the on-paper 16-byte padding; the file itself is not transformed.
-  print->bufsize=(print->origsize+15) & 0xFFFFFFF0;
+  // The stored data is the file, 32 bytes for its digest, and padding to
+  // the next 16.
+  print->bufsize=(print->origsize+SHA256_SIZE+15) & 0xFFFFFFF0;
   print->buf=(uchar *)calloc(print->bufsize,1);
   if (!print->buf) {Reporterror("Low memory");Stopprinting(print);return;}
   // Set options.
@@ -267,11 +269,24 @@ static void Finishreading(t_printdata *print) {
   if(status!=0) {Reporterror("Unable to close input file");Stopprinting(print);return;}
   print->datasize=print->bufsize;  // padded size: this is what goes on paper
   print->alignedsize=print->bufsize;
-  print->bufcrc=Crc16(print->buf,print->alignedsize);
   // The digest covers the original bytes, not the padding, so it matches what
   // sha256sum reports for the input file.
   Sha256hex(print->buf,print->origsize,print->sha256);
   printf("SHA-256 %s\n",print->sha256);
+  // The last 32 bytes of the stored data carry it, so a sheet found years
+  // from now checks itself instead of resting on a digest someone had to
+  // keep. It rides in ordinary data blocks, so ECC, CRC and the recovery
+  // parity cover it like any other bytes, and it is never written out: a
+  // restore writes the first origsize bytes and stops.
+  // The superblock is not told. mode stays 0, so every decoder already in
+  // the world restores these pages exactly as before. What marks the digest
+  // is the gap datasize-origsize: 0..15 on a page without one, 32..47 with.
+  for (int i=0; i<SHA256_SIZE; i++) {
+    int hi=print->sha256[2*i],lo=print->sha256[2*i+1];
+    hi=hi<='9'?hi-'0':hi-'a'+10;
+    lo=lo<='9'?lo-'0':lo-'a'+10;
+    print->buf[print->bufsize-SHA256_SIZE+i]=(uchar)(hi*16+lo); };
+  print->bufcrc=Crc16(print->buf,print->alignedsize);
   print->step++;
 }
 

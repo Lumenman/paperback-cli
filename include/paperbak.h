@@ -143,6 +143,7 @@ ushort Crc16(uchar *data,int length);
 ///////////////////////////// SHA-256 AND TEXT /////////////////////////////////
 
 #define SHA256_HEXLEN  64              // Digest length as lowercase hex
+#define SHA256_SIZE    32              // Digest length in bytes
 
 void   Sha256hex(const uchar *data,uint32_t length,char *hex);
 extern char pb_expect[SHA256_HEXLEN+1];  // --expect digest, empty if unset

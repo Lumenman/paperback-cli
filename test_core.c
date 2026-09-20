@@ -67,6 +67,24 @@ static void setup(const uchar *bytes,unsigned size) {
   p->filecrc=Crc16(p->data,size);
   strcpy(pb_outfile,"core-output.rar");
 }
+static void setup_digest(const uchar *bytes,unsigned size,int corrupt) {
+  char hex[SHA256_HEXLEN+1];
+  unsigned stored=(size+SHA256_SIZE+15)&~15u;
+  Closefproc(0);
+  t_fproc *p=&pb_fproc[0];p->busy=1;p->origsize=size;p->datasize=stored;
+  p->nblock=(stored+NDATA-1)/NDATA;p->ndata=p->nblock;
+  p->data=calloc(p->nblock,NDATA);p->datavalid=malloc(p->nblock);
+  assert(p->data && p->datavalid);
+  memcpy(p->data,bytes,size);memset(p->datavalid,1,p->nblock);
+  Sha256hex(p->data,size,hex);
+  for(int i=0;i<SHA256_SIZE;i++) {
+    int hi=hex[2*i],lo=hex[2*i+1];
+    hi=hi<='9'?hi-'0':hi-'a'+10;lo=lo<='9'?lo-'0':lo-'a'+10;
+    p->data[stored-SHA256_SIZE+i]=(uchar)(hi*16+lo); }
+  if(corrupt) p->data[stored-1]^=1;
+  p->filecrc=Crc16(p->data,stored);
+  strcpy(pb_outfile,"core-output.rar");
+}
 static void matches(const uchar *bytes,size_t size) {
   FILE *f=fopen(pb_outfile,"rb");assert(f);
   for(size_t i=0;i<size;i++) assert(fgetc(f)==bytes[i]);
@@ -95,6 +113,25 @@ int main(void) {
   matches(expected,512);map_contains("90 180");map_contains("450 512");
   // A subsequent complete restore replaces the stale damage report.
   setup(original,512);assert(Saverestoredfile(0,0)==0);matches(original,512);map_contains("Status: COMPLETE");
+  // A page that carries its own digest checks the restore without being told
+  // anything: the last 32 bytes of the stored data are the SHA-256 of the
+  // origsize bytes before them, and nothing in the superblock says so.
+  setup_digest(original,512,0);
+  assert(Saverestoredfile(0,0)==0);matches(original,512);
+  // A digest that does not describe the bytes is a failure, with or without
+  // --force. The bytes are still written; it is the verdict that differs.
+  setup_digest(original,512,1);
+  assert(Saverestoredfile(0,0)==-1);matches(original,512);
+  setup_digest(original,512,1);
+  assert(Saverestoredfile(0,1)==-1);matches(original,512);
+  // Losing only a block that lies past origsize costs the check, not the file:
+  // every byte that gets written is still here, so this is not a damaged
+  // restore. Before the digest, padding alone could raise the same false alarm.
+  setup_digest(original,512,0);
+  assert(pb_fproc[0].nblock*NDATA>512+SHA256_SIZE);
+  pb_fproc[0].datavalid[pb_fproc[0].nblock-1]=0;pb_fproc[0].ndata--;
+  assert(Saverestoredfile(0,0)==0);matches(original,512);map_contains("COMPLETE");
+  setup(original,512);
   // A zero CRC is a checksum value, not a legacy 'skip verification' marker.
   assert(pb_fproc[0].filecrc!=0);pb_fproc[0].filecrc=0;assert(Saverestoredfile(0,0)==-1);
   for(int mode=1;mode<=3;mode++) {

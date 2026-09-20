@@ -105,6 +105,10 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     # on the sheet, and the file's own checksum is only 16 bits.
     plain=run('--decode','-i',page,'-o',output)
     assert ('SHA-256 '+digest) in plain.stdout,plain.stdout
+    # And the page carries that digest itself, so the check needs nothing kept
+    # on the side. It rides in the last 32 bytes of the stored data, which is
+    # why the sheet holds one more block than the file alone would need.
+    assert 'matching the digest the page carries' in plain.stdout,plain.stdout
     got=run('--decode','-i',page,'-o',output,'--expect',digest.upper())
     assert 'matches --expect' in got.stdout and output.read_bytes()==original
     bad=run('--decode','-i',page,'-o',output,'--expect','f'*64,code=1)
