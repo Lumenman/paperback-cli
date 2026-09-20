@@ -120,8 +120,16 @@ def dotspan(ink, cell):
     rounding to whole pixels, so measuring the ink is cheaper than reproducing
     the encoder's arithmetic - and sampling the gap reads paper for every dot."""
     perphase = np.array([ink[i::cell].mean() for i in range(cell)])
-    lo, hi = widestrun(perphase - perphase.min())
-    return lo, hi - lo + 1
+    v = perphase - perphase.min()
+    # -s 100 leaves no gap, so every phase is equally inked and the widest run
+    # is chosen by noise. The dot is the whole cell; say so instead of guessing.
+    if v.max() <= 0.1 * perphase.max():
+        return 0, cell
+    # The dot need not start at the phase the bounding box starts at: at -d 120
+    # it straddles the cell edge, and a linear widest run then finds only the
+    # longer of the two halves. The profile is periodic, so search two periods.
+    lo, hi = widestrun(np.tile(v, 2))
+    return lo % cell, min(hi - lo + 1, cell)
 
 
 def lattice(src, cell, box=None):
@@ -256,6 +264,10 @@ def self_test():
     FX = F[0, 0] * X + F[0, 1] * Y + F[0, 2]
     FY = F[1, 0] * X + F[1, 1] * Y + F[1, 2]
     assert (wx, wy) == (4, 4), (wx, wy)
+    # The two ways a real sheet breaks a linear widest run: a dot that fills its
+    # cell (-s 100), and one that straddles the cell edge (-d 120).
+    assert dotspan(np.array([0.4] * 4), 4) == (0, 4)
+    assert dotspan(np.tile([.4, .4, 0., .4, .4], 9), 5) == (3, 4)
     was = samplexy(src, X, Y, wx, wy) < 128
     got = samplexy(scan, FX, FY, wx, wy) < 128
     bad = np.count_nonzero(was != got)
