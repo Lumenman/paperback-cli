@@ -49,9 +49,6 @@
 // Oleh's magic numbers
 #define FILENAME_SIZE 64
 
-#define VERSIONHI      1               // Major version
-#define VERSIONLO      2               // Minor version
-
 #define MAINDX         800             // Max width of the main window, pixels
 #define MAINDY         600             // Max height of the main window, pixels
 
