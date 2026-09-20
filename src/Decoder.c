@@ -416,6 +416,20 @@ static int Recognizebits(t_data *result,uchar grid[NDOT][NDOT],
             unsigned group=result->addr>>28;
             unsigned span=(group?group:1)*NDATA;
             if (group>NGROUPMAX || offset>=MAXSIZE || offset%span) continue;
+            // Once the page has named its own address window, use it too: the
+            // page number and pagesize in the label bound every block on the
+            // sheet to pagesize bytes out of the 2^28 an address can name.
+            // On a full A4 page that is ~11 bits on top of the ~7 above, so
+            // a block fabricated by an erasure decode costs ~35 bits to pass
+            // instead of ~23. Until a label is read the window is unknown and
+            // only the checks above apply.
+            if (pdata->superblock.addr==SUPERBLOCK &&
+              pdata->superblock.page>0 && pdata->superblock.pagesize>0 &&
+              pdata->superblock.pagesize%NDATA==0) {
+              uint64_t base=(uint64_t)(pdata->superblock.page-1)*
+                pdata->superblock.pagesize;
+              if (offset<base || offset>=base+pdata->superblock.pagesize)
+                continue; };
           }
           // Data recognized correctly, save orientation of actually processed
           // page and factoring.
@@ -1101,11 +1115,16 @@ int Decodeblock(t_procdata *pdata,int posx,int posy,t_data *result) {
       // Erasures only on the unshifted grid, where 1.20 had them. Declaring
       // the 32 least reliable bytes erasures spends ALL the Reed-Solomon
       // redundancy: whatever the other 95 bytes say is then a valid codeword,
-      // and only the 16-bit CRC stands between a fabricated block and the
-      // file. One in 65536 attempts gets through, so the number of attempts
-      // is the exposure - and trying the shifted grids that way as well
-      // multiplied it ninefold. On the three sheets of NOTES.md 12 that was
-      // enough to accept one wrong block in 910.
+      // and only the checks Recognizebits can make afterwards stand between a
+      // fabricated block and the file. The address window there now costs a
+      // fabricated block ~12 bits more than the CRC alone, enough to afford
+      // all nine grids - so that was tried, on the six printed sheets of
+      // NOTES.md 22 and twelve simulated scans. It read not one block more
+      // anywhere (NOTES.md 25), cost 40% on the sheets that fail, and on
+      // 03-d150-s100 it took one block through erasures that the unchanged
+      // code read cleanly on a later grid with 20 bytes of ECC margin left.
+      // Zero gain, weaker evidence: the restriction stays until a sheet is
+      // found that needs it.
       answer=Recognizebits(result,g[shiftorder[i]],pdata,shiftorder[i]==4);
       // Don't stop if in search-for-the-best-quality mode.
       if ((pdata->mode & M_BEST)!=0 && answer<bestanswer) {
