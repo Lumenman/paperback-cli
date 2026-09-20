@@ -49,9 +49,6 @@
 // Oleh's magic numbers
 #define FILENAME_SIZE 64
 
-#define MAINDX         800             // Max width of the main window, pixels
-#define MAINDY         600             // Max height of the main window, pixels
-
 // Labels on a page laid out without recovery blocks. The r>0 layout prints
 // redundancy+1 of them and then fills every leftover cell with more, and for
 // good reason: a page whose only label is unreadable is lost whole, whatever
