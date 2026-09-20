@@ -58,7 +58,7 @@ static void help(void) {
  "  -d, --dpi N           Code dot density, 40..600; default 150\n"
  "  -s, --dotsize N       Dot width percent, 50..100; default 70\n"
  "  -r, --redundancy N    One recovery block per N data blocks, 2..10, or 0 for\n"
- "                        none; default 0\n"
+ "                        none; default 5\n"
  "  -b, --border          Black outer border\n"
  "  --header              Print a text header and footer; costs grid rows\n"
  "  -n, --no-header       Drop them again if something turned them on\n"
@@ -88,7 +88,11 @@ int main(int argc,char **argv) {
  const char **inputs=calloc(argc,sizeof(*inputs));
  int count=0,mode=0,pages=0,landscape=0,c,status=0;
  if(!inputs) return 1;
- pb_dpi=150; pb_dotpercent=70; pb_redundancy=0; pb_autosave=0;
+ // -r 5 rather than the -r 0 of NOTES 15.1: that traded the parity for 20% more
+ // bytes, before three print runs showed the other default has no margin left
+ // to spend (NOTES 22.4, 23). A sheet nobody can reprint is the case to default
+ // for, and it is the case parity is for.
+ pb_dpi=150; pb_dotpercent=70; pb_redundancy=5; pb_autosave=0;
  while((c=getopt_long(argc,argv,"i:o:p:fd:s:r:nbvh",options,NULL))!=-1) {
   switch(c) {
    case 'e': case 'D': if(mode && mode!=c) goto invalid; mode=c; break;
