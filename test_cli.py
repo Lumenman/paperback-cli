@@ -316,5 +316,28 @@ with tempfile.TemporaryDirectory(prefix='paperback-test-',dir='.') as folder:
     # 1 would be one recovery block per data block, which is a second copy of
     # the sheet and not what anyone means by redundancy.
     run('--encode','-i',big,'-o',root/'one.bmp','--dpi',100,'-r',1,code=1)
+    # -o *.pdf puts every sheet into one PDF of 1-bit stencils: the dots are
+    # the bitmap's pixels, RunLength coded, on a page exactly the paper size.
+    run('--encode','-i',big,'-o',root/'norec.PDF','--dpi',100,'-r',0)
+    doc=(root/'norec.PDF').read_bytes()
+    assert b'/Count %d '%len(none) in doc and b'/MediaBox [0 0 595.2756 841.8898]' in doc
+    xref=int(doc[doc.rindex(b'startxref')+9:].split()[0])
+    offsets=[int(e[:10]) for e in doc[xref:].split(b'\n')[3:3+2+4*len(none)]]
+    assert all(doc.startswith(b'%d 0 obj'%k,o) for k,o in enumerate(offsets,1))
+    def unrle(s):
+        out=bytearray();i=0
+        while s[i]!=128:
+            n=s[i]
+            if n<128: out+=s[i+1:i+2+n];i+=2+n
+            else: out+=s[i+1:i+2]*(257-n);i+=2
+        return bytes(out)
+    import re
+    streams=[m for m in re.finditer(rb'/ImageMask true .*?/Length (\d+) >>\nstream\n',doc)]
+    ink=bytes(0x30 if v<100 else 0x31 for v in range(256))
+    for sheet,m in zip(none,streams[::2]):
+        b,w,h,off,stride=bmp(sheet);pad=b'1'*(-w%8)
+        want=b''.join(int(b[off+y*stride:off+y*stride+w].translate(ink)+pad,2).to_bytes((w+7)//8,'big')
+            for y in reversed(range(h)))
+        assert unrle(doc[m.end():m.end()+int(m[1])])==want,sheet
 print('All CLI checks passed')
 

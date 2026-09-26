@@ -159,6 +159,12 @@ void Stopprinting(t_printdata *print) {
   //print->hfont10=NULL;
   //if (print->hbmp!=NULL) {
   //  DeleteObject(print->hbmp); print->hbmp=NULL; print->dibbits=NULL; };
+  if (print->hpdf!=NULL) {             // Only on failure: success closes it
+    fclose(print->hpdf);
+    print->hpdf=NULL;
+  };
+  free(print->pdfxref);
+  print->pdfxref=NULL;
   // Stop printing.
   print->step=0;
 }
@@ -634,6 +640,131 @@ static void Drawheadline(uchar *sheet,int stride,int sheetheight,int x0,int avai
     ytop+max((band-7*scale)/2,0),s,scale,128);
 };
 
+// Service function, creates an output sheet. The sheet carries the same bytes
+// as the input file, so it gets the same 0600 the decoder gives a restored file.
+static FILE *Createsheet(const char *path) {
+#ifdef __linux__
+  mode_t oldmask=umask(0077);
+#endif
+  FILE *f=fopen(path,"wb");
+#ifdef __linux__
+  umask(oldmask);
+  if (f!=NULL) chmod(path,0600);       // an existing page keeps its old mode otherwise
+#endif
+  return f;
+};
+
+// Service function, tells a PDF output name from a bitmap one.
+static int Ispdf(const char *path) {
+  size_t n=strlen(path);
+  return n>=4 && path[n-4]=='.' && tolower((uchar)path[n-3])=='p' &&
+    tolower((uchar)path[n-2])=='d' && tolower((uchar)path[n-1])=='f';
+};
+
+// Service function, PDF RunLengthDecode encoding of n bytes into out, which
+// must hold 2*n+1. Returns the encoded length. The only filter a PDF reader
+// has that needs no library here: a sheet shrinks from 8.7 MB raw to 0.6 MB,
+// against 0.06 MB with Flate (experiments/NOTES.md 28).
+static size_t Runlength(const uchar *in,size_t n,uchar *out) {
+  size_t i=0,j,o=0;
+  while (i<n) {
+    for (j=i+1; j<n && j-i<128 && in[j]==in[i]; j++) ;
+    if (j-i>=2) {                      // Repeat: 257-count, then the byte
+      out[o++]=(uchar)(257-(j-i)); out[o++]=in[i]; i=j; continue; };
+    // Literal up to the next pair, which is cheaper as a repeat.
+    for (j=i+1; j<n && j-i<128 && !(j+1<n && in[j]==in[j+1]); j++) ;
+    out[o++]=(uchar)(j-i-1);
+    memcpy(out+o,in+i,j-i); o+=j-i; i=j;
+  };
+  out[o++]=128;                        // End of data
+  return o;
+};
+
+// Service function, writes the pixels with lo<=grey<hi of a bottom-up sheet as
+// one 1-bit stencil (/ImageMask) object k. A stencil has no grey edges for a
+// viewer to smooth: the printer places the dots at its own resolution, and the
+// scan loses fewer of them than from the bitmap (experiments/NOTES.md 27).
+static int Pdfstencil(t_printdata *print,int k,const uchar *sheet,int stride,
+  int lo,int hi,uchar *packed,uchar *out) {
+  int x,y,w=print->sheetwidth,h=print->sheetheight,rowbytes=(w+7)/8;
+  size_t n;
+  for (y=0; y<h; y++) {                // PDF rows run top down
+    const uchar *row=sheet+(size_t)(h-1-y)*stride;
+    uchar *p=packed+(size_t)y*rowbytes;
+    memset(p,0xFF,rowbytes);           // Bit 0 paints
+    for (x=0; x<w; x++)
+      if (row[x]>=lo && row[x]<hi) p[x>>3]&=(uchar)~(0x80>>(x&7));
+  };
+  n=Runlength(packed,(size_t)rowbytes*h,out);
+  print->pdfxref[k]=ftell(print->hpdf);
+  fprintf(print->hpdf,"%d 0 obj\n<< /Type /XObject /Subtype /Image /Width %d "
+    "/Height %d /ImageMask true /Interpolate false /Filter /RunLengthDecode "
+    "/Length %u >>\nstream\n",k,w,h,(unsigned)n);
+  return fwrite(out,1,n,print->hpdf)==n &&
+    fputs("\nendstream\nendobj\n",print->hpdf)>=0;
+};
+
+// Service function, appends one sheet to the PDF, opening it on the first page.
+// Each page is four objects from 3+4*page: dots, header text, content, page.
+// The page is exactly the paper size; the sheet bitmap, a pixel wider than the
+// paper after rounding, is drawn at its true scale from the top left corner.
+static int Pdfpage(t_printdata *print,const uchar *sheet,int stride,int npages) {
+  int i,k=3+4*print->frompage,success;
+  size_t bytes=(size_t)(print->sheetwidth+7)/8*print->sheetheight;
+  double pw=pb_paperwidth*72/25.4,ph=pb_paperheight*72/25.4;
+  double w=print->sheetwidth*72.0/print->ppix,h=print->sheetheight*72.0/print->ppiy;
+  char content[256];
+  uchar *packed,*out;
+  if (print->hpdf==NULL) {
+    print->pdfxref=calloc(3+4*npages,sizeof(long));
+    if (print->pdfxref==NULL) return 0;
+    print->hpdf=Createsheet(print->outbmp);
+    if (print->hpdf==NULL) return 0;
+    fputs("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n",print->hpdf);
+    print->pdfxref[1]=ftell(print->hpdf);
+    fputs("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",print->hpdf);
+    print->pdfxref[2]=ftell(print->hpdf);
+    fprintf(print->hpdf,"2 0 obj\n<< /Type /Pages /Count %d /Kids [",npages);
+    for (i=0; i<npages; i++) fprintf(print->hpdf," %d 0 R",6+4*i);
+    fputs(" ] >>\nendobj\n",print->hpdf);
+  };
+  packed=malloc(bytes);
+  out=malloc(2*bytes+1);
+  success=packed!=NULL && out!=NULL &&
+    Pdfstencil(print,k,sheet,stride,0,100,packed,out) &&     // Dots, grey 64
+    Pdfstencil(print,k+1,sheet,stride,100,200,packed,out);   // Text, grey 128
+  free(packed); free(out);
+  if (!success) return 0;
+  // Dots print solid black: the grey 64 of the bitmap reads as well but prints
+  // as a halftone that blotches (experiments/NOTES.md 27.4). Text keeps its grey.
+  i=snprintf(content,sizeof(content),
+    "q 0 g %.4f 0 0 %.4f 0 %.4f cm /D Do Q\nq 0.5020 g %.4f 0 0 %.4f 0 %.4f cm /T Do Q",
+    w,h,ph-h,w,h,ph-h);
+  print->pdfxref[k+2]=ftell(print->hpdf);
+  fprintf(print->hpdf,"%d 0 obj\n<< /Length %d >>\nstream\n%s\nendstream\nendobj\n",
+    k+2,i,content);
+  print->pdfxref[k+3]=ftell(print->hpdf);
+  fprintf(print->hpdf,"%d 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 %.4f %.4f] "
+    "/Resources << /XObject << /D %d 0 R /T %d 0 R >> >> /Contents %d 0 R >>\nendobj\n",
+    k+3,pw,ph,k,k+1,k+2);
+  return !ferror(print->hpdf);
+};
+
+// Service function, writes the cross-reference table and closes the PDF.
+static int Pdffinish(t_printdata *print,int npages) {
+  int k,nobj=2+4*npages;
+  long xref=ftell(print->hpdf);
+  fprintf(print->hpdf,"xref\n0 %d\n0000000000 65535 f \n",nobj+1);
+  for (k=1; k<=nobj; k++)
+    fprintf(print->hpdf,"%010ld 00000 n \n",print->pdfxref[k]);
+  fprintf(print->hpdf,"trailer\n<< /Size %d /Root 1 0 R >>\nstartxref\n%ld\n%%%%EOF\n",
+    nobj+1,xref);
+  k=!ferror(print->hpdf);
+  if (fclose(print->hpdf)!=0) k=0;
+  print->hpdf=NULL;
+  return k;
+};
+
 // Prints one complete page or saves one bitmap.
 static void Printnextpage(t_printdata *print) {
   int dx,dy,px,py,nx,ny,width,height,border,redundancy,black,ndata;
@@ -651,6 +782,9 @@ static void Printnextpage(t_printdata *print) {
   offset=print->frompage*print->pagesize;
   if (offset>=print->datasize || print->frompage>print->topage) {
     // All requested pages are printed, finish this step.
+    if (print->hpdf!=NULL &&
+      !Pdffinish(print,(print->datasize+print->pagesize-1)/print->pagesize)) {
+      Reporterror("Unable to save PDF");Stopprinting(print);return; };
     print->step++;
     return; 
   };
@@ -852,7 +986,8 @@ static void Printnextpage(t_printdata *print) {
     //EndPage(print->dc); 
   }
   else {
-    // Save bitmap to file. First, get file name.
+    // Save bitmap to file, or add the page to the PDF. First, get file name.
+    int pdf=Ispdf(print->outbmp);
     fnsplit(print->outbmp,drv,dir,nam,ext);
     if (ext[0]=='\0') strcpy(ext,".bmp");
     if (npages>1)
@@ -862,30 +997,11 @@ static void Printnextpage(t_printdata *print) {
       n=snprintf(path,sizeof(path),"%s%s%s%s",drv,dir,nam,ext);
     if (n<0 || n>=(int)sizeof(path)) {
       Reporterror("Page name too long");Stopprinting(print);return; };
-    // Create bitmap file.
-    //hbmpfile=CreateFile(path,GENERIC_WRITE,0,NULL,
-    //  CREATE_ALWAYS,FILE_ATTRIBUTE_NORMAL,NULL);
-    // The sheet carries the same bytes as the input file, so it gets the same
-    // 0600 the decoder gives a restored file.
-#ifdef __linux__
-    mode_t oldmask=umask(0077);
-#endif
-    hbmpfile = fopen (path, "wb");
-#ifdef __linux__
-    umask(oldmask);
-    if (hbmpfile!=NULL) chmod(path,0600); // an existing page keeps its old mode otherwise
-#endif
-    //if (hbmpfile==INVALID_HANDLE_VALUE) //
-    if (hbmpfile == NULL) {
-      Reporterror("Unable to create bitmap file");
-      Stopprinting(print);
-      return; 
-    };
     // Copy the grid onto a full white sheet, preserving physical margins.
     int stride=(print->sheetwidth+3)&~3;
     size_t bytes=(size_t)stride*print->sheetheight;
     uchar *sheet=malloc(bytes);
-    if(!sheet) {fclose(hbmpfile);Reporterror("Low memory");Stopprinting(print);return;}
+    if(!sheet) {Reporterror("Low memory");Stopprinting(print);return;}
     memset(sheet,255,bytes);
     int gridtop=print->bordertop+print->extratop;
     int bottom=print->sheetheight-gridtop-height;
@@ -911,6 +1027,16 @@ static void Printnextpage(t_printdata *print) {
         gridtop+height,
         print->extrabottom,foot,k);
     };
+    if (pdf) {
+      success=Pdfpage(print,sheet,stride,npages);
+      free(sheet);
+      if(!success) {Reporterror("Unable to save PDF");Stopprinting(print);return;}
+      print->frompage++;
+      return;
+    };
+    hbmpfile=Createsheet(path);
+    if (hbmpfile==NULL) {
+      free(sheet);Reporterror("Unable to create bitmap file");Stopprinting(print);return; };
     n=sizeof(BITMAPINFOHEADER)+256*sizeof(RGBQUAD);
     memset(&bmfh,0,sizeof(bmfh));
     bmfh.bfType=CHAR_BM; bmfh.bfSize=sizeof(bmfh)+n+bytes;

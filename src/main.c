@@ -42,7 +42,7 @@ static double dimension(const char *s) {
   return n;
 }
 static void help(void) {
- puts("Usage: paperback-cli --encode -i FILE -o PAGE.bmp [options]\n"
+ puts("Usage: paperback-cli --encode -i FILE -o PAGE.bmp|SHEETS.pdf [options]\n"
  "       paperback-cli --decode -i SCAN.bmp [-i SCAN2.bmp ...] [-o FILE]\n"
  "       paperback-cli --decode [-o FILE] SCAN1.bmp SCAN2.bmp ...\n"
  "  -p, --pages N         Read base_0001.bmp through base_NNNN.bmp\n"
@@ -111,7 +111,7 @@ int main(int argc,char **argv) {
    case 'b': pb_printborder=1; break;
    case 'n': pb_printheader=0; break;   // Was an empty break for years
    case 'h': help(); free(inputs); return 0;
-   case 'v': puts("PaperBack CLI 1.7 (GPL); PaperBack by Oleh Yuschuk"); free(inputs); return 0;
+   case 'v': puts("PaperBack CLI 1.8 (GPL); PaperBack by Oleh Yuschuk"); free(inputs); return 0;
    case IMAGE_DPI: pb_resx=pb_resy=number(optarg,80,2400); if(pb_resx<0) goto invalid; break;
    case HEADER: pb_printheader=1; break;
    // The map claims to print how many bytes each block's ECC had to repair.

@@ -211,6 +211,8 @@ typedef struct t_printdata {           // Print control structure
   uchar          *drawbits;            // Pointer to file bitmap bits
   uchar          bmi[sizeof(BITMAPINFO)+256*sizeof(RGBQUAD)]; // Bitmap info
   int            startdoc;             // Print job started
+  FILE           *hpdf;                // Open PDF, all pages go into one file
+  long           *pdfxref;             // Offsets of the PDF objects, 1-based
 } t_printdata;
 
 
