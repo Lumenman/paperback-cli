@@ -1,7 +1,12 @@
 name: CI
 on:
+  # Branches only: a pushed tag is a commit already checked, and its release
+  # runs the jobs again anyway. Notes and README changes build nothing.
   push:
+    branches: ['**']
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
   # Publishing a release builds, tests and attaches both binaries to it.
   release:
     types: [published]
