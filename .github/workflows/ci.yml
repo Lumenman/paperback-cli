@@ -1,5 +1,12 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  # Publishing a release builds, tests and attaches both binaries to it.
+  release:
+    types: [published]
+permissions:
+  contents: write
 
 jobs:
   linux:
@@ -10,7 +17,16 @@ jobs:
         target: [check, sanitize]
     steps:
       - uses: actions/checkout@v4
-      - run: make ${{ matrix.target }}
+      # check links statically on every push, so the release binary is the
+      # one the tests ran on and does not care which glibc it lands on.
+      - run: make ${{ matrix.target }} ${{ matrix.target == 'check' && 'LDFLAGS=-static' || '' }}
+      - if: github.event_name == 'release' && matrix.target == 'check'
+        run: |
+          cp paperback-cli paperback-cli-linux-x86_64
+          gh release upload "$TAG" paperback-cli-linux-x86_64 --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
 
   windows:
     runs-on: windows-latest
@@ -26,3 +42,9 @@ jobs:
           # The Makefile runs the tests with the runner's Windows python.
           path-type: inherit
       - run: make check
+      - if: github.event_name == 'release'
+        shell: pwsh
+        run: gh release upload "$env:TAG" paperback-cli.exe --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
