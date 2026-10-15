@@ -12,6 +12,9 @@
  *
  *         Author:  surkeh@protonmail.com
  *
+ *       Modified:  2026-10-15, paperback-cli: convertToPosixTime subtracts
+ *                  in signed arithmetic, so dates before 1970 stay negative.
+ *
  * =====================================================================================
  */
 #include "FileAttributes.h"
