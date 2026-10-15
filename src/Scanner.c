@@ -86,7 +86,7 @@ int Decodebitmap(char *path) {
     }
   }
   if(ferror(f)) {Reporterror("Bitmap read error");goto done;}
-  if(badindex && !pb_force) goto invalid;
+  if(badindex && !pb_force) {Reporterror("Pixel index outside the palette; use --force to treat it as white");goto done;}
   if(badindex) fprintf(stderr,"Warning: invalid palette indices treated as white\n");
   Startbitmapdecoding(&pb_procdata,data,width,height); data=NULL; result=0;
   goto done;

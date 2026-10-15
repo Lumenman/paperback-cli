@@ -49,7 +49,8 @@ time_t convertToPosixTime (FileTimePortable windowsTime)
   ticks           =  ticks << 32;
   ticks          |= windowsTime.dwLowDateTime;
 
-  return (time_t)( ticks / WINDOWS_TICK  - SEC_TO_UNIX_EPOCH );
+  // Signed, so a date before 1970 (or junk off a scan) stays negative.
+  return (time_t)( (int64_t)(ticks / WINDOWS_TICK) - (int64_t)SEC_TO_UNIX_EPOCH );
 }
 
 /*

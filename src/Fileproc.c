@@ -283,7 +283,7 @@ int Finishpage(int slot,int ngood,int nbad,uint32_t nrestored) {
   if (j<firstblock+onpage && j<pf->nblock)
     Message("Unrecoverable errors on page, please scan it again\n",0);
   else if (nbad>0)
-    Message("Page processed\n, all bad blocks successfully restored",0);
+    Message("Page processed, all bad blocks successfully restored\n",0);
   else
     Message("Page processed\n",0);
   // Calculate list of (partially) incomplete pages.
@@ -307,9 +307,6 @@ int Finishpage(int slot,int ngood,int nbad,uint32_t nrestored) {
   // file, before anything had been written - and it read as success even when
   // the save was then refused. What it actually meant, that every block is in,
   // the summary says once and at the right time.
-  if (pf->ndata==pf->nblock && pb_autosave!=0) {
-    Message("File complete",0);
-    Saverestoredfile(slot,0); };
   return pf->ndata==pf->nblock ? 0 : (nrempages ? nrempages : 1);
 };
 
@@ -428,7 +425,6 @@ int Saverestoredfile(int slot,int force) {
     exclusive=1; };
   // This clears pf->data in place, including the parity written into gaps by
   // Addblock, so it is only safe because the CLI saves once after every scan.
-  // Turning pb_autosave on would destroy parity later pages still need.
   for(int i=0;i<pf->nblock;i++)
     if(pf->datavalid[i]!=1) memset(data+(size_t)i*NDATA,0,NDATA);
   FILE *out=Createfile(path,"wb",exclusive);

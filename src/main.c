@@ -18,7 +18,6 @@ int       pb_dotpercent;
 int       pb_redundancy;
 int       pb_printheader;
 int       pb_printborder;
-int       pb_autosave;
 int       pb_bestquality;
 int       pb_qualitymap;
 int       pb_marginunits;
@@ -92,7 +91,7 @@ int main(int argc,char **argv) {
  // bytes, before three print runs showed the other default has no margin left
  // to spend (NOTES 22.4, 23). A sheet nobody can reprint is the case to default
  // for, and it is the case parity is for.
- pb_dpi=150; pb_dotpercent=70; pb_redundancy=5; pb_autosave=0;
+ pb_dpi=150; pb_dotpercent=70; pb_redundancy=5;
  while((c=getopt_long(argc,argv,"i:o:p:fd:s:r:nbvh",options,NULL))!=-1) {
   switch(c) {
    case 'e': case 'D': if(mode && mode!=c) goto invalid; mode=c; break;
@@ -132,8 +131,9 @@ int main(int argc,char **argv) {
     const char *names[]={"A3","A4","A5","A6","Letter","Legal","Tabloid"};
     double widths[]={297,210,148,105,215.9,215.9,279.4};
     double heights[]={420,297,210,148,279.4,355.6,431.8};
-    int i; for(i=0;i<7;i++) if(!strnicmp(optarg,names[i],32)) break;
-    if(i==7) goto invalid;
+    int i,n=sizeof(names)/sizeof(names[0]);
+    for(i=0;i<n;i++) if(!strnicmp(optarg,names[i],32)) break;
+    if(i==n) goto invalid;
     pb_paperwidth=widths[i]; pb_paperheight=heights[i]; break;
    }
    case SIZE: {

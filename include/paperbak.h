@@ -61,10 +61,6 @@ typedef unsigned char  uchar;
 typedef uint16_t       ushort;
 typedef unsigned int   uint;
 
-#ifdef ulong
-#undef ulong
-#endif
-typedef unsigned long  ulong;
 
 ////////////////////////////////////////////////////////////////////////////////
 /////////////////////////////// DATA PROPERTIES ////////////////////////////////
@@ -76,7 +72,6 @@ typedef unsigned long  ulong;
 #define SUPERBLOCK     0xFFFFFFFF      // Address of superblock
 
 #define NGROUP         5               // For NGROUP blocks (1..15), 1 recovery
-#define NGROUPMIN      2
 #define NGROUPMAX      10
 
 typedef struct __attribute__ ((packed)) t_data { // Block on paper
@@ -351,10 +346,9 @@ extern char      pb_outfile[MAXPATH];     // Last selected data file to save
  
 extern int       pb_dpi;                  // Dot raster, dots per inch
 extern int       pb_dotpercent;           // Dot size, percent of dpi
-extern int       pb_redundancy;           // Redundancy (NGROUPMIN..NGROUPMAX)
+extern int       pb_redundancy;           // Redundancy (0, or 2..NGROUPMAX)
 extern int       pb_printheader;          // Print header and footer
 extern int       pb_printborder;          // Border around bitmap
-extern int       pb_autosave;             // Autosave completed files
 extern int       pb_bestquality;          // Determine best quality
 extern int       pb_qualitymap;           // Print per-block decode map
   
@@ -382,17 +376,6 @@ int max (int a, int b);
 int min (int a, int b);
 
 
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////// WINDOWS SERVICE FUNCTIONS ///////////////////////////
-
-#if defined(_WIN32) || defined(__CYGWIN__)
-// Converts file date and time into the text according to system defaults and
-// places into the string s of length n. Returns number of characters in s.
-int Filetimetotext(FILETIME *fttime,char *s,int n);
-
-void print_filetime(FILETIME ftime);
-
-#endif
 
 
 extern int pb_errors, pb_force;
